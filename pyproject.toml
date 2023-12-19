@@ -1,0 +1,31 @@
+[build-system]
+requires = ["poetry-core>=1.4.0"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.poetry]
+name = "diffhandles"
+version = "0.1.0"
+description = "DiffusionHandles: Enabling 3D Edits for Diffusion Models by Lifting Activations to 3D"
+documentation = "https://diffusionhandles.github.io/"
+repository = "https://git.azr.adobeitc.com/adobe-research/diffusionhandles"
+authors = [
+    "Karran Pandey",
+    "Paul Guerrero",
+    "Matheus Gadelha",
+    "Yannick Hold-Geoffroy",
+    "Niloy Mitra",
+    "Karan Singh",
+    ]
+
+[tool.poetry.dependencies]
+python = ">=3.9, <3.11"
+torch = "1.13" # required by ZoeDepth (PyTorch >= 2.0 does not accept np.int64 instead of int in the torch.nn.interpolate args)
+torchvision = "*"
+trimesh = "*"
+scipy = "*"
+timm = "0.6.12" # required by ZoeDepth (the pretrained weights that are loaded from torch hub are for this version)
+diffusers = "==0.23" # version >=0.24 requires huggingface-hub>=0.19.4, which conflicts with lang-sam's requirements (even though it probably works, so updaring lang-sam's requirements would probably fix this)
+transformers = ">=4.33"
+accelerate = "*"
+saicinpainting = { git = "https://git.azr.adobeitc.com/adobe-research/lama.git" }
+lang-sam = { git = "https://github.com/luca-medeiros/lang-segment-anything.git" }

@@ -1,0 +1,34 @@
+### Environment Setup ### 
+
+I've exported the conda environment I was using into a yml file - hopefully this should work, but in case it doesn't or there are issues with particular dependencies let me know.
+
+### Depth Transforms ### 
+
+The jupyter notebook 'depthTransform.ipynb' performs the depth map edit given the input data directory and 3D transform. It expects the input data directory to contain curr_image.png (input image), curr_bg_image.png (foreground removed image) and curr_mask.png (segmentation mask).
+
+The notebook stores the data needed to run the edit generation step in a sub-directory corresponding to the input transform. In particular, for a given transform, we store positions.npy (the pixel-wise correspondences), transformed_depth_map.png (the edited depth map) and target_mask_map.png (the transformed segmentation mask).
+
+### Edit Generation ###
+
+The edit generation step needs a json file path (currently set to id_paths.json) as input which contains the metadata required to generate the edited image. 
+
+In particular, the json file has the following structure - 
+
+'scene_data' is a list of all the metadata required for each scene. 
+
+Each element in this list has the following variables 
+
+'scene_dir' (the root directory for the scene), 
+'transform_dirs' (the sub-directories corresponding to the user input transforms), 
+'init_transform_dir' (sub-directory corresponding to a null transform - we need to generate this directory with the depth edit notebook for each scene - i.e just a 0,0,0 translation with 0 rotation),
+'prompt' - a basic prompt for the scene, 
+'phrases' - the phrases corresponding to the object we wish to edit. We always want the foreground object as the first phrase, and one more phrase which typically corresponds to the background, however, this isn't really used anymore so it doesn't matter. The important part is the first phrase should be the foreground object that we want to edit, and it should have one more phrase that can be anything.
+
+To generate the edited images we need to run batch_edit_generation.py and the outputs will be stored in the corresponding transform subdirectories as output.png files.
+
+An example json file is provided for the sunflower along with necessary data to test it out. 
+
+
+
+
+
