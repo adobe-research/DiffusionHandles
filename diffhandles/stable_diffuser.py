@@ -36,7 +36,7 @@ class StableDiffuser(Diffuser):
 
         return self
     
-    def inverted_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str]):
+    def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str]):
 
         depth = normalize_depth(depth)
         
@@ -159,7 +159,7 @@ class StableDiffuser(Diffuser):
         #     image[0].save('output' + name + '.png')
         return attention_list, activation_list, activation2_list, activation3_list
 
-    def depth_estimate_inference(
+    def guided_inference(
             self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str],
             attention_maps_orig: torch.Tensor, activations_orig: torch.Tensor, activations2_orig: torch.Tensor, activations3_orig: torch.Tensor):
 

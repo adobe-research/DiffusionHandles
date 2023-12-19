@@ -115,7 +115,7 @@ class ImageEditor:
         # Can foreground and background features be separated after computing this forward pass, so that phrases are not needed in the forward pass?
         self.diffuser = StableDiffuser(custom_unet=True)
         self.diffuser.to()
-        self.attentions, self.activations, self.activations2, self.activations3 = self.diffuser.inverted_inference(
+        self.attentions, self.activations, self.activations2, self.activations3 = self.diffuser.initial_inference(
             latents=self.inverted_noise, depth=self.depth, uncond_embeddings=self.inverted_null_text,
             prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase])
 
@@ -129,7 +129,7 @@ class ImageEditor:
             raise ValueError(f"Transformed depth must be of size {self.img_res}x{self.img_res}.")
 
         # perform second diffusion inference pass guided by the 3d-transformed features
-        output_img = self.diffuser.depth_estimate_inference(
+        output_img = self.diffuser.guided_inference(
             latents=self.inverted_noise, depth=transformed_depth, uncond_embeddings=self.inverted_null_text,
             prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase],
             attention_maps_orig=self.attentions, activations_orig=self.activations, activations2_orig=self.activations2, activations3_orig=self.activations3)
@@ -305,7 +305,7 @@ class ImageEditor:
         img = (img - img.min())/(img.max() - img.min())
         img = (img*255).round().astype("uint8")
 
-        return lap_inpainted_depth_map, target_mask_cleaned, correspondences, original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y
+        return lap_inpainted_depth_map, target_mask_cleaned, correspondences
 
     def foreground_mask(self, img, fg_prompt):
         pass
