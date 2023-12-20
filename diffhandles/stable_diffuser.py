@@ -1,14 +1,17 @@
+import math
 import inspect
 from typing import List
 
 import torch
+import numpy as np
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
 from diffhandles.my_model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel
 from tqdm import tqdm
 
 from diffhandles.diffuser import Diffuser
-from diffhandles.utils import normalize_depth
+from diffhandles.utils import normalize_depth, normalize_attn_torch, unpack_correspondences
+from diffhandles.losses import compute_localized_transformed_appearance_loss, compute_background_loss
 
 class StableDiffuser(Diffuser):
     def __init__(self, custom_unet=False):
@@ -161,9 +164,12 @@ class StableDiffuser(Diffuser):
 
     def guided_inference(
             self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str],
-            attention_maps_orig: torch.Tensor, activations_orig: torch.Tensor, activations2_orig: torch.Tensor, activations3_orig: torch.Tensor):
+            attention_maps_orig: torch.Tensor, activations_orig: torch.Tensor, activations2_orig: torch.Tensor, activations3_orig: torch.Tensor,
+            correspondences: torch.Tensor):
 
-        depth_mask = normalize_depth(depth_mask)
+        processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
+        
+        depth = normalize_depth(depth)
         
         # Get Object Positions
         object_positions = phrase_to_index(prompt, phrases)
@@ -216,7 +222,7 @@ class StableDiffuser(Diffuser):
                 latents = latents.requires_grad_(True)
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                latent_model_input = torch.cat([latent_model_input, depth_mask[0].view(1,1,depth_mask.shape[2], depth_mask.shape[3])], dim=1)
+                latent_model_input = torch.cat([latent_model_input, depth[0].view(1,1,depth.shape[2], depth.shape[3])], dim=1)
                                 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -245,20 +251,55 @@ class StableDiffuser(Diffuser):
                             appearance_loss = 0.0
                             bg_loss = 0.0
                             if(timestep_num % 3 == 0):
-                                appearance_loss += 7.5*compute_localized_transformed_appearance_loss(attention_maps, activations3[0], attention_map_obj_orig, activation3_orig, 6, 7, 1)
-                                bg_loss += 1.5*compute_background_loss(attention_maps, activations3[0], attention_map_obj_orig, activation3_orig, 6, 7)
+                                appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
+                                    attn_maps=attention_maps, activations=activations3[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=6, attn_layer_high=7, patch_size=1)
+                                bg_loss += 1.5 * compute_background_loss(
+                                    attn_maps=attention_maps, activations=activations3[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=6, attn_layer_high=7)
 
                             if(timestep_num % 3 == 1):
-                                appearance_loss += 5.0*compute_localized_transformed_appearance_loss(attention_maps, activations2[0], attention_map_obj_orig, activation2_orig, 5 , 6, 1)
-                                bg_loss += 1.5*compute_background_loss(attention_maps, activations2[0], attention_map_obj_orig, activation2_orig, 5, 6)
+                                appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
+                                    attn_maps=attention_maps, activations=activations2[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=5, attn_layer_high=6, patch_size=1)
+                                bg_loss += 1.5 * compute_background_loss(
+                                    attn_maps=attention_maps, activations=activations2[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=5, attn_layer_high=6)
 
                             if(timestep_num % 3 == 2):
-                                appearance_loss += 5.0*compute_localized_transformed_appearance_loss(attention_maps, activations2[0], attention_map_obj_orig, activation2_orig, 5 , 6, 1)                             
-                                appearance_loss += 7.5*compute_localized_transformed_appearance_loss(attention_maps, activations3[0], attention_map_obj_orig, activation3_orig, 6, 7, 1)
-                                bg_loss += 1.5*compute_background_loss(attention_maps, activations3[0], attention_map_obj_orig, activation3_orig, 6, 7)
-                                bg_loss += 1.5*compute_background_loss(attention_maps, activations2[0], attention_map_obj_orig, activation2_orig, 5, 6)
+                                appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
+                                    attn_maps=attention_maps, activations=activations2[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=5, attn_layer_high=6, patch_size=1)
+                                appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
+                                    attn_maps=attention_maps, activations=activations3[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=6, attn_layer_high=7, patch_size=1)
+                                bg_loss += 1.5 * compute_background_loss(
+                                    attn_maps=attention_maps, activations=activations3[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=6, attn_layer_high=7)
+                                bg_loss += 1.5 * compute_background_loss(
+                                    attn_maps=attention_maps, activations=activations2[0],
+                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    processed_correspondences=processed_correspondences,
+                                    attn_layer_low=5, attn_layer_high=6)
                         else:
-                            appearance_loss = 0.1*compute_localized_transformed_appearance_loss(attention_maps, activations3[0], attention_map_obj_orig, activation3_orig, 6, 7, 1)
+                            appearance_loss = 0.1 * compute_localized_transformed_appearance_loss(
+                                attn_maps=attention_maps, activations=activations3[0],
+                                attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                attn_layer_low=6, attn_layer_high=7, patch_size=1)
 
                         if(iteration == 0):
                             app_wt = 2.5
@@ -273,13 +314,12 @@ class StableDiffuser(Diffuser):
                             app_wt = 2.5
                             bg_wt = 2.5
 
-                        print('bg loss')
-                        print(bg_loss)
+                        # print('bg loss')
+                        # print(bg_loss)
 
-                        print('appearance loss')
-                        print(appearance_loss)
-                                            
-                                            
+                        # print('appearance loss')
+                        # print(appearance_loss)
+
                         loss += 1.5*app_wt*appearance_loss + 1.25*bg_wt*bg_loss 
 
                 loss *= 30        
@@ -302,7 +342,7 @@ class StableDiffuser(Diffuser):
                 latent_model_input = torch.cat([latents] * 2) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 if(depth_iter):
-                    latent_model_input = torch.cat([latent_model_input, depth_mask], dim=1)
+                    latent_model_input = torch.cat([latent_model_input, depth], dim=1)
 
                 text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
 
@@ -332,6 +372,89 @@ class StableDiffuser(Diffuser):
         #     return image[0]
         return
 
+    def process_correspondences(self, correspondences, img_res):
+
+        original_x, original_y, transformed_x, transformed_y = unpack_correspondences(correspondences)
+
+        # Since np.split creates arrays of shape (N, 1), we'll squeeze them to get back to shape (N,)
+        original_x = original_x.squeeze()
+        original_y = original_y.squeeze()
+        transformed_x = transformed_x.squeeze()
+        transformed_y = transformed_y.squeeze()
+        
+        original_mask = np.zeros((img_res, img_res))
+        
+        transformed_mask = np.zeros((img_res, img_res))
+        
+        visible_orig_x = []
+        visible_orig_y = []
+        visible_trans_x = []
+        visible_trans_y = []    
+        
+        for x, y, tx, ty in zip(original_x, original_y, transformed_x, transformed_y):
+            if((tx >= 0 and tx < img_res) and (ty >= 0 and ty < img_res)):
+                visible_orig_x.append(x)
+                visible_orig_y.append(y)
+                visible_trans_x.append(tx)
+                visible_trans_y.append(ty)
+        
+        for x, y in zip(visible_orig_x, visible_orig_y):
+            original_mask[y,x] = 1
+
+        for x, y in zip(visible_trans_x, visible_trans_y):
+            transformed_mask[y,x] = 1        
+            
+        # visualize_img(original_mask, 'original_mask')
+        # visualize_img(transformed_mask,'transform_mask')
+        
+        original_x, original_y, transformed_x, transformed_y = (
+            np.array(visible_orig_x), np.array(visible_orig_y), np.array(visible_trans_x), np.array(visible_trans_y))
+
+        # original_x, original_y, transformed_x, transformed_y = load_positions(scene_dir + 'positions.npy')
+        original_x, original_y = original_x // (img_res // 64), original_y // (img_res // 64)
+        transformed_x, transformed_y = transformed_x // (img_res // 64), transformed_y // (img_res // 64)
+
+        bg_original_x, bg_original_y, bg_transformed_x, bg_transformed_y = original_x, original_y, transformed_x, transformed_y
+
+        # Create sets for original and transformed pixels
+        original_pixels = set(zip(bg_original_x, bg_original_y))
+        transformed_pixels = set(zip(bg_transformed_x, bg_transformed_y))
+
+        # Create a set of all pixels in a 64x64 image
+        all_pixels = {(x, y) for x in range(64) for y in range(64)}
+
+        # Find pixels not in either of the original or transformed sets
+        remaining_pixels = all_pixels - (original_pixels | transformed_pixels)
+
+        # Extract remaining_x and remaining_y
+        remaining_x = np.array([x for x, y in remaining_pixels])
+        remaining_y = np.array([y for x, y in remaining_pixels])
+
+        remaining_pixels_orig = all_pixels - (original_pixels)
+
+        remaining_x_orig = np.array([x for x, y in remaining_pixels_orig])
+        remaining_y_orig = np.array([y for x, y in remaining_pixels_orig])
+
+        remaining_pixels_trans = all_pixels - (transformed_pixels)
+
+        remaining_x_trans = np.array([x for x, y in remaining_pixels_trans])
+        remaining_y_trans = np.array([y for x, y in remaining_pixels_trans])
+
+        processed_correspondences = {
+            'original_x': original_x,
+            'original_y': original_y,
+            'transformed_x': transformed_x,
+            'transformed_y': transformed_y,
+            'remaining_x': remaining_x,
+            'remaining_y': remaining_y,
+            'remaining_x_orig': remaining_x_orig,
+            'remaining_y_orig': remaining_y_orig,
+            'remaining_x_trans': remaining_x_trans,
+            'remaining_y_trans': remaining_y_trans,
+        }
+
+        return processed_correspondences
+    
     def get_timesteps(self, num_inference_steps, strength):
         # get the original timestep using init_timestep
         init_timestep = min(int(num_inference_steps * strength), num_inference_steps)
@@ -357,6 +480,79 @@ class StableDiffuser(Diffuser):
         if accepts_generator:
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
+
+def retrieve_attention_maps(attn_down, attn_mid, attn_up, obj_idx, object_positions, img_dims):
+    
+    attn_maps = [] 
+    
+    for i in range(len(attn_down)):
+        attn_map = 0
+
+        for attn_map_integrated in attn_down[i]:
+            attn_map += attn_map_integrated
+    
+        attn_map /= len(attn_down[i])
+        b, i, j = attn_map.shape
+        H = W = int(math.sqrt(i))
+        
+        ca_map_obj = 0
+        for object_position in object_positions[obj_idx]:
+            ca_map_obj += attn_map[:,:,object_position].reshape(b,H,W)
+
+        ca_map_obj = ca_map_obj.mean(axis = 0)
+        ca_map_obj = normalize_attn_torch(ca_map_obj)
+        ca_map_obj = ca_map_obj.view(1, 1, H, W)
+        #m = torch.nn.Upsample(scale_factor=img_dims / H, mode='nearest')
+        #ca_map_obj = m(ca_map_obj)
+        ca_map_obj = torch.nn.functional.interpolate(ca_map_obj, (img_dims, img_dims), mode = 'bilinear')
+        attn_maps.append(ca_map_obj[0][0])
+
+    attn_map = 0
+
+    for attn_map_integrated in attn_mid:
+        attn_map += attn_map_integrated
+    
+    attn_map /= len(attn_mid)
+    b, i, j = attn_map.shape
+    H = W = int(math.sqrt(i))
+
+    ca_map_obj = 0
+    
+    for object_position in object_positions[obj_idx]:
+        ca_map_obj += attn_map[:,:,object_position].reshape(b,H,W)
+
+    ca_map_obj = ca_map_obj.mean(axis = 0)
+    ca_map_obj = normalize_attn_torch(ca_map_obj)
+    ca_map_obj = ca_map_obj.view(1, 1, H, W)
+    ca_map_obj = torch.nn.functional.interpolate(ca_map_obj, (img_dims, img_dims), mode = 'bilinear')    
+    #m = torch.nn.Upsample(scale_factor=img_dims / H, mode='nearest')
+    #ca_map_obj = m(ca_map_obj)
+
+    attn_maps.append(ca_map_obj[0][0])
+    
+    for i in range(len(attn_up)):
+        attn_map = 0
+
+        for attn_map_integrated in attn_up[i]:
+            attn_map += attn_map_integrated
+    
+        attn_map /= len(attn_up[i])
+        b, i, j = attn_map.shape
+        H = W = int(math.sqrt(i))
+
+        ca_map_obj = 0
+        for object_position in object_positions[obj_idx]:
+            ca_map_obj += attn_map[:,:,object_position].reshape(b,H,W)
+
+        ca_map_obj = ca_map_obj.mean(axis = 0)
+        ca_map_obj = normalize_attn_torch(ca_map_obj)
+        ca_map_obj = ca_map_obj.view(1, 1, H, W)
+        ca_map_obj = torch.nn.functional.interpolate(ca_map_obj, (img_dims, img_dims), mode = 'bilinear')        
+        #m = torch.nn.Upsample(scale_factor=img_dims / H, mode='nearest')
+        #ca_map_obj = m(ca_map_obj)
+        attn_maps.append(ca_map_obj[0][0])
+        
+    return attn_maps
 
 def phrase_to_index(prompt, phrases):
     phrases = [x.strip() for x in phrases.split(';')]

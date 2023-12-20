@@ -199,26 +199,3 @@ class NullInversion:
             print("Null-text optimization...")
         uncond_embeddings = self.null_optimization(ddim_latents, num_inner_steps, early_stop_epsilon)
         return (target_img, recon_img), ddim_latents[-1], uncond_embeddings
-        
-# def load_512(image_path):
-#     image = np.array(Image.open(image_path))[:, :, :3]
-    
-#     # crop image to be square
-#     h, w, c = image.shape
-#     if h < w:
-#         offset = (w - h) // 2
-#         image = image[:, offset:offset + h]
-#     elif w < h:
-#         offset = (h - w) // 2
-#         image = image[offset:offset + w]
-
-#     # resize to 512
-#     image = np.array(Image.fromarray(image).resize((512, 512)))
-    
-#     # value range from [0, 255] to [0, 1]
-#     image = torch.from_numpy(image).float() / 255.0
-    
-#     # convert to NCHW
-#     image = image.permute(2, 0, 1).unsqueeze(0)
-    
-#     return image

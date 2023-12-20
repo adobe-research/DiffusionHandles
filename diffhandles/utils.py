@@ -226,3 +226,18 @@ def solve_laplacian_depth(fg_depth, bg_depth, mask):
     output_depth[unknown_pixels] = solution
 
     return output_depth
+
+def normalize_attn_torch(attn_map):
+    attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min())
+    attn_map = 10*(attn_map - 0.5)
+    attn_map = torch.sigmoid(attn_map)
+    attn_map = (attn_map - attn_map.min()) / (attn_map.max() - attn_map.min())
+    return attn_map
+
+def pack_correspondences(original_x, original_y, transformed_x, transformed_y):
+    correspondences = torch.stack((original_x, original_y, transformed_x, transformed_y), axis=-1)
+    return correspondences
+
+def unpack_correspondences(correspondences):
+    original_x, original_y, transformed_x, transformed_y = torch.split(correspondences, 4, axis=-1)
+    return original_x, original_y, transformed_x, transformed_y

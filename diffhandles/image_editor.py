@@ -7,7 +7,7 @@ import scipy.ndimage
 from diffhandles.zoe_depth_estimator import ZoeDepthEstimator
 from diffhandles.null_inversion import NullInversion
 from diffhandles.stable_diffuser import StableDiffuser
-from utils import max_pool_numpy, poisson_solve, transform_point_cloud, solve_laplacian_depth
+from diffhandles.utils import max_pool_numpy, poisson_solve, transform_point_cloud, solve_laplacian_depth, pack_correspondences
 
 class ImageEditor:
 
@@ -132,7 +132,8 @@ class ImageEditor:
         output_img = self.diffuser.guided_inference(
             latents=self.inverted_noise, depth=transformed_depth, uncond_embeddings=self.inverted_null_text,
             prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase],
-            attention_maps_orig=self.attentions, activations_orig=self.activations, activations2_orig=self.activations2, activations3_orig=self.activations3)
+            attention_maps_orig=self.attentions, activations_orig=self.activations, activations2_orig=self.activations2, activations3_orig=self.activations3,
+            correspondences=correspondences)
 
         return output_img
 
@@ -249,8 +250,13 @@ class ImageEditor:
 
         #save_positions(original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y, save_path + 'positions.npy')
 
-        correspondences = np.stack((original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y), axis=-1)
-
+        # correspondences = np.stack((original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y), axis=-1)
+        correspondences = pack_correspondences(
+            torch.from_numpy(original_positions_x),
+            torch.from_numpy(original_positions_y),
+            torch.from_numpy(transformed_positions_x),
+            torch.from_numpy(transformed_positions_y))
+            
         # img_tensor = np.array(cut_img)
         img_tensor = np.array(self.fg_mask) # TODO: check that this works
         ref_mask = (img_tensor[:, :] == 255)
