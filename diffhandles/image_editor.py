@@ -1,24 +1,38 @@
 import numpy as np
 import torch
+import torchvision
 from PIL import Image
 import cv2
 import scipy.ndimage
 
+from lang_sam import LangSAM
+
 from diffhandles.zoe_depth_estimator import ZoeDepthEstimator
 from diffhandles.null_inversion import NullInversion
 from diffhandles.stable_diffuser import StableDiffuser
+from diffhandles.lama_inpainter import LaMaInpainter
 from diffhandles.utils import max_pool_numpy, poisson_solve, transform_point_cloud, solve_laplacian_depth, pack_correspondences
 
 class ImageEditor:
 
     def __init__(self):
 
+        # Zoe Depth Estimator, for estimating the depth of the input image
+        # https://github.com/isl-org/ZoeDepth
         self.depth_estimator = ZoeDepthEstimator()
+        
+        # Language Segment Anything Model, for selecting the foreground object
+        # https://github.com/luca-medeiros/lang-segment-anything
+        self.foreground_segmenter = LangSAM()
 
         # TODO: use a single diffuser model for inversion and inference
         # TODO: even when not using a single diffuser model, make sure versions used for inversion and inference match
         self.diffuser = None
         # self.inverter = NullInversion(self.diffuser)
+
+        # LaMa, for removing the foreground object from the input image
+        # https://github.com/advimman/lama
+        self.inpainter = LamaInpainter()
 
         self.img_res = 512
 
@@ -313,8 +327,11 @@ class ImageEditor:
 
         return lap_inpainted_depth_map, target_mask_cleaned, correspondences
 
-    def foreground_mask(self, img, fg_prompt):
-        pass
+    def foreground_mask(self, fg_prompt: str):
+        masks, boxes, phrases, logits = self.foreground_segmenter.predict(
+            image_pil=torchvision.transforms.functional.to_pil_image(self.img),
+            text_prompt=fg_prompt)
+        return masks[0]
 
     def remove_foreground(self, img, foreground_mask):
         pass
