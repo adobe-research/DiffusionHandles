@@ -11,7 +11,7 @@ from scipy.sparse import linalg, diags, lil_matrix
 from scipy.ndimage import convolve
 import typing
 from tuls_utils import bgr_to_gray, depth_to_points, read_image
-from diffhandles.zoe_depth_estimatation import get_points, zoe_points_to_depth_merged, get_aligned_pts, get_aligned_pts_true_depth, get_aligned_pts_syn_depth
+from old_code.zoe_depth_estimatation import get_points, zoe_points_to_depth_merged, get_aligned_pts, get_aligned_pts_true_depth, get_aligned_pts_syn_depth
 import matplotlib.pyplot as plt
 
 img_dim = 512

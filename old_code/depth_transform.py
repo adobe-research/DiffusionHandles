@@ -3,7 +3,7 @@ import os
 import numpy as np
 import torch
 
-from depth_edit_zoe import depth_edit_transform, visualize_img, plot_img
+from old_code.depth_edit_zoe import depth_edit_transform, visualize_img, plot_img
 
 curr_dir = '../data/test/a_sunflower_in_the_garden_sunflower/'
 

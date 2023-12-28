@@ -21,7 +21,7 @@ from torch.optim.adam import Adam
 import torch.nn.functional as nnf
 from typing import Optional, Union, Tuple, List, Callable, Dict
 from diffusers import DDIMScheduler
-import ptp_utils
+import old_code.ptp_utils as ptp_utils
 import pickle
 
 def load_512(image_path, left=0, right=0, top=0, bottom=0):

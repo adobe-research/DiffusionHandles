@@ -6,7 +6,7 @@ import torch
 import numpy as np
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
-from diffhandles.my_model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel
+from diffhandles.model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel
 from tqdm import tqdm
 
 from diffhandles.diffuser import Diffuser
