@@ -10,7 +10,7 @@ from lang_sam import LangSAM
 from diffhandles.zoe_depth_estimator import ZoeDepthEstimator
 from diffhandles.null_inversion import NullInversion
 from diffhandles.stable_diffuser import StableDiffuser
-from diffhandles.lama_inpainter import LaMaInpainter
+from diffhandles.lama_inpainter import LamaInpainter
 from diffhandles.utils import max_pool_numpy, poisson_solve, transform_point_cloud, solve_laplacian_depth, pack_correspondences
 
 class ImageEditor:
@@ -334,7 +334,7 @@ class ImageEditor:
         return masks[0]
 
     def remove_foreground(self, img, foreground_mask):
-        pass
+        return self.inpainter.inpaint(img=img, mask=foreground_mask)
 
     def invert_image(self, img):
         pass
