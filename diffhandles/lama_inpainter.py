@@ -54,10 +54,10 @@ class LamaInpainter(Inpainter):
         self.pad_to_modulo = 8
 
     def to(self, device: torch.device):
-        # if not self.refine:
-        #     self.model.to(device)
         if self.refine and self.model.device != device:
             raise ValueError('Cannot change device of LamaInpainter when refining.')
+        else:
+            self.model.to(device)
     
     def inpaint(self, image, mask):
         image = image.squeeze(0)

@@ -29,11 +29,11 @@ class StableDiffuser(Diffuser):
 
         self.device = self.unet.device
 
-    def to(self, device: torch.device = None, dtype: torch.dtype = None):
-        self.unet = self.unet.to(device=device, dtype=dtype)
-        self.tokenizer = self.tokenizer.to(device=device, dtype=dtype)
-        self.text_encoder = self.text_encoder.to(device=device, dtype=dtype)
-        self.vae = self.vae.to(device=device, dtype=dtype)
+    def to(self, device: torch.device = None):
+        self.unet = self.unet.to(device=device)
+        self.tokenizer = self.tokenizer.to(device=device)
+        self.text_encoder = self.text_encoder.to(device=device)
+        self.vae = self.vae.to(device=device)
 
         self.device = device
 

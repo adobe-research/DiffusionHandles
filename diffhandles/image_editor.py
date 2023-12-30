@@ -64,11 +64,19 @@ class ImageEditor:
 
         self.device = self.depth_estimator.device
 
-    def to(self, device: torch.device = None, dtype: torch.dtype = None):
-        self.depth_esimtator.to(devices=device, dtype=dtype)
+    def to(self, device: torch.device = None):
+        if self.depth_estimator is not None:
+            self.depth_estimator.to(devices=device)
 
         if self.diffuser is not None:
-            self.diffuser.to(device=device, dtype=dtype)
+            self.diffuser.to(device=device)
+
+        if self.foreground_segmenter is not None:
+            self.foreground_segmenter.sam.model.to(device=device)
+            self.foreground_segmenter.device = device
+        
+        if self.inpainter is not None:
+            self.inpainter.to(device=device)
 
         self.device = device
 
@@ -128,7 +136,7 @@ class ImageEditor:
         # TODO: Can this be done once when loading the image? Are phrases needed here?
         # Can foreground and background features be separated after computing this forward pass, so that phrases are not needed in the forward pass?
         self.diffuser = StableDiffuser(custom_unet=True)
-        self.diffuser.to()
+        self.diffuser.to(self.device)
         self.attentions, self.activations, self.activations2, self.activations3 = self.diffuser.initial_inference(
             latents=self.inverted_noise, depth=self.depth, uncond_embeddings=self.inverted_null_text,
             prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase])
