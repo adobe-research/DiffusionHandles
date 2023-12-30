@@ -74,10 +74,10 @@ class ImageEditor:
 
     ### High-level functions ###
 
-    def edit_image(self, img, prompt, fg_phrase: str, bg_phrase: str = "", rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
+    def edit_image(self, img: torch.Tensor, prompt: str, fg_phrase: str, bg_phrase: str = "", rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
         self.set_input_image(img=img, prompt=prompt)
         self.select_foreground(fg_phrase=fg_phrase, bg_phrase=bg_phrase)
-        self.transform_foreground(rot_angle=rot_angle, rot_axis=rot_axis, translation=translation)
+        return self.transform_foreground(rot_angle=rot_angle, rot_axis=rot_axis, translation=translation)
 
     def set_input_image(self, img: torch.Tensor, prompt: str = ""):
 
