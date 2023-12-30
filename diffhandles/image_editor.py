@@ -66,7 +66,7 @@ class ImageEditor:
 
     def to(self, device: torch.device = None):
         if self.depth_estimator is not None:
-            self.depth_estimator.to(devices=device)
+            self.depth_estimator.to(device=device)
 
         if self.diffuser is not None:
             self.diffuser.to(device=device)
