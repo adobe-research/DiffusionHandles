@@ -7,7 +7,7 @@ name = "diffhandles"
 version = "0.1.0"
 description = "DiffusionHandles: Enabling 3D Edits for Diffusion Models by Lifting Activations to 3D"
 documentation = "https://diffusionhandles.github.io/"
-repository = "https://git.azr.adobeitc.com/adobe-research/diffusionhandles"
+repository = "https://github.com/paulguerrero/diffusionhandles.git"
 authors = [
     "Karran Pandey",
     "Paul Guerrero",
@@ -27,5 +27,5 @@ timm = "0.6.12" # required by ZoeDepth (the pretrained weights that are loaded f
 diffusers = "==0.23" # version >=0.24 requires huggingface-hub>=0.19.4, which conflicts with lang-sam's requirements (even though it probably works, so updaring lang-sam's requirements would probably fix this)
 transformers = ">=4.33"
 accelerate = "*"
-saicinpainting = { git = "https://git.azr.adobeitc.com/adobe-research/lama.git" }
+saicinpainting = { git = "https://github.com/paulguerrero/lama.git" }
 lang-sam = { git = "https://github.com/luca-medeiros/lang-segment-anything.git" }

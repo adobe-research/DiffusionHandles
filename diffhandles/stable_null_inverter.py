@@ -2,18 +2,17 @@ from typing import Union
 
 import numpy as np
 import torch
-from PIL import Image
 from tqdm import tqdm
 
+from diffhandles.null_inverter import NullInverter
+from diffhandles.stable_diffuser import StableDiffuser
 from diffhandles.utils import normalize_depth
 
-class NullInversion:
+class StableNullInverter(NullInverter):
 
-    def __init__(self, model, num_ddim_steps=50, guidance_scale=7.5):
-        # scheduler = DDIMScheduler(beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False,
-        #                           set_alpha_to_one=False)
+    def __init__(self, model: StableDiffuser, num_ddim_steps: int = 50, guidance_scale: float = 7.5):
 
-        self.model = model
+        super().__init__(model=model)
         
         self.num_ddim_steps = num_ddim_steps
         self.guidance_scale = guidance_scale
@@ -23,6 +22,10 @@ class NullInversion:
 
         self.model.scheduler.set_timesteps(self.num_ddim_steps)
         
+    def to(self, device: torch.device):
+        self.model.to(device)
+        return self
+
     def prev_step(self, model_output: Union[torch.FloatTensor, np.ndarray], timestep: int, sample: Union[torch.FloatTensor, np.ndarray]):
         prev_timestep = timestep - self.scheduler.config.num_train_timesteps // self.scheduler.num_inference_steps
         alpha_prod_t = self.scheduler.alphas_cumprod[timestep]
@@ -52,7 +55,7 @@ class NullInversion:
     def get_noise_pred(self, latents, t, is_forward=True, context=None):
         latents_input = torch.cat([latents] * 2)
         latents_input = self.model.scheduler.scale_model_input(latents_input, t)
-        latents_input = torch.cat([latents_input, self.depth], dim=1)
+        latents_input = torch.cat([latents_input, torch.cat([self.depth]*2, dim=0)], dim=1)
 
         if context is None:
             context = self.context
@@ -126,6 +129,17 @@ class NullInversion:
 
     @torch.no_grad()
     def init_depth(self, depth):
+        # resize depth map to match the size of the feature image (post vae encoding)
+        h, w = self.model.get_feature_shape()[:2]
+        # h, w = 64, 64 # TEMP! (comment in above)
+        depth = torch.nn.functional.interpolate(
+            depth,
+            size=(h, w),
+            mode="bicubic",
+            align_corners=False,
+        )
+        
+        # normalize depth to [0, 1]
         self.depth = normalize_depth(depth)
 
     @torch.no_grad()

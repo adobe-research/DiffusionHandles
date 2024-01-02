@@ -1,14 +1,17 @@
 import math
 import inspect
 from typing import List
+from packaging import version
 
 import torch
 import numpy as np
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
-from diffhandles.model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel
+from diffusers.configuration_utils import FrozenDict
+from diffusers.utils import deprecate
 from tqdm import tqdm
 
+from diffhandles.model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel
 from diffhandles.diffuser import Diffuser
 from diffhandles.utils import normalize_depth, normalize_attn_torch, unpack_correspondences
 from diffhandles.losses import compute_localized_transformed_appearance_loss, compute_background_loss
@@ -17,27 +20,69 @@ class StableDiffuser(Diffuser):
     def __init__(self, custom_unet=False):
         super().__init__()
 
+        model_name = "stabilityai/stable-diffusion-2-depth"
+        
         self.scheduler = DDIMScheduler(
             beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
         if custom_unet:
-            self.unet = CustomUNet2DConditionModel.from_pretrained("stabilityai/stable-diffusion-2-depth", subfolder="unet")
+            self.unet = CustomUNet2DConditionModel.from_pretrained(model_name, subfolder="unet")
         else:
-            self.unet = UNet2DConditionModel.from_pretrained("stabilityai/stable-diffusion-2-depth", subfolder="unet")
-        self.tokenizer = CLIPTokenizer.from_pretrained("stabilityai/stable-diffusion-2-depth", subfolder="tokenizer")
-        self.text_encoder = CLIPTextModel.from_pretrained("stabilityai/stable-diffusion-2-depth", subfolder="text_encoder")
-        self.vae = AutoencoderKL.from_pretrained("stabilityai/stable-diffusion-2-depth", subfolder="vae")
+            self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder="unet")
+        self.tokenizer = CLIPTokenizer.from_pretrained(model_name, subfolder="tokenizer")
+        self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder="text_encoder")
+        self.vae = AutoencoderKL.from_pretrained(model_name, subfolder="vae")
 
         self.device = self.unet.device
 
+        # fix deprecated config file for some stable diffusion versions
+        is_unet_version_less_0_9_0 = hasattr(self.unet.config, "_diffusers_version") and version.parse(
+            version.parse(self.unet.config._diffusers_version).base_version
+        ) < version.parse("0.9.0.dev0")
+        is_unet_sample_size_less_64 = hasattr(self.unet.config, "sample_size") and self.unet.config.sample_size < 64
+        is_stable_diffusion_2_depth = (
+            hasattr(self.unet.config, "_name_or_path")
+            and self.unet.config._name_or_path == "stabilityai/stable-diffusion-2-depth"
+        )
+        if (is_unet_version_less_0_9_0 and is_unet_sample_size_less_64) or is_stable_diffusion_2_depth:
+            deprecation_message = (
+                "The configuration file of the unet has set the default `sample_size` to smaller than"
+                " 64 which seems highly unlikely .If you're checkpoint is a fine-tuned version of any of the"
+                " following: \n- CompVis/stable-diffusion-v1-4 \n- CompVis/stable-diffusion-v1-3 \n-"
+                " CompVis/stable-diffusion-v1-2 \n- CompVis/stable-diffusion-v1-1 \n- runwayml/stable-diffusion-v1-5"
+                " \n- runwayml/stable-diffusion-inpainting \n you should change 'sample_size' to 64 in the"
+                " configuration file. Please make sure to update the config accordingly as leaving `sample_size=32`"
+                " in the config might lead to incorrect results in future versions. If you have downloaded this"
+                " checkpoint from the Hugging Face Hub, it would be very nice if you could open a Pull request for"
+                " the `unet/config.json` file"
+            )
+            deprecate(
+                "sample_size<64", "1.0.0", deprecation_message, standard_warn=False
+            )
+            new_config = dict(self.unet.config)
+            new_config["sample_size"] = 64
+            self.unet._internal_dict = FrozenDict(new_config)
+            self.unet.sample_size = 64
+
     def to(self, device: torch.device = None):
         self.unet = self.unet.to(device=device)
-        self.tokenizer = self.tokenizer.to(device=device)
+        # self.tokenizer = self.tokenizer.to(device=device)
         self.text_encoder = self.text_encoder.to(device=device)
         self.vae = self.vae.to(device=device)
 
         self.device = device
 
         return self
+
+    def get_image_shape(self):
+        feat_shape = self.get_feature_shape()
+        vae_scale_factor = 2 ** (len(self.vae.config.block_out_channels) - 1)
+        return (feat_shape[0] * vae_scale_factor, feat_shape[1] * vae_scale_factor, 3)
+
+    def get_feature_shape(self):
+        feat_hw = self.unet.sample_size
+        if isinstance(feat_hw, int):
+            feat_hw = (feat_hw, feat_hw)
+        return (feat_hw[0], feat_hw[1], self.unet.config.out_channels)
     
     def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str]):
 

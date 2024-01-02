@@ -22,14 +22,14 @@ def test():
 
     input_img = load_image(input_img_path).unsqueeze(dim=0)
     input_img = input_img.to(device)
-    with torch.no_grad():
-        img_editor.set_input_image(img=input_img, prompt=prompt)
-        img_editor.select_foreground(fg_phrase=fg_phrase, bg_phrase=bg_phrase)
-        for rot_angle in rot_angles:
-            edited_img = img_editor.transform_foreground(
-                rot_angle=rot_angle, rot_axis=rot_axis, translation=translation)
-            edited_img_path = f'{edited_img_path_template}_rotated_{rot_angle:.0f}.png'
-            save_image(edited_img.detach().cpu().squeeze(dim=0), edited_img_path)
+    # with torch.no_grad():
+    img_editor.set_input_image(img=input_img, prompt=prompt)
+    img_editor.select_foreground(fg_phrase=fg_phrase, bg_phrase=bg_phrase)
+    for rot_angle in rot_angles:
+        edited_img = img_editor.transform_foreground(
+            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation)
+        edited_img_path = f'{edited_img_path_template}_rotated_{rot_angle:.0f}.png'
+        save_image(edited_img.detach().cpu().squeeze(dim=0), edited_img_path)
 
 def load_image(path: str) -> torch.Tensor:
     img = Image.open(path)

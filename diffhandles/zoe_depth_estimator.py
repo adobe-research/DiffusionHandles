@@ -11,12 +11,14 @@ class ZoeDepthEstimator(DepthEstimator):
         self.model = torch.hub.load("isl-org/ZoeDepth", "ZoeD_NK", pretrained=True)
 
     def to(self, device: torch.device):
-        self.model = self.model.to(device)
+        self.model.to(device)
+        return self
     
     def estimate_depth(self, img: torch.Tensor):
         return self.model.infer(img)
 
-    def get_intrinsics(self, h: int, w: int):
+    @staticmethod
+    def get_intrinsics(h: int, w: int):
         """
         Intrinsics for a pinhole camera model.
         Assume fov of 55 degrees and central principal point.
@@ -32,14 +34,15 @@ class ZoeDepthEstimator(DepthEstimator):
                         [0, f, cy],
                         [0, 0, 1]])
 
-    def depth_to_points(self, depth: torch.Tensor, R=None, t=None):
+    @staticmethod
+    def depth_to_points(depth: torch.Tensor, R=None, t=None):
 
         if depth.shape[0] != 1:
             raise ValueError("Only batch size 1 is supported")
 
-        depth = depth.squeeze().cpu().numpy()
+        depth = depth.squeeze(dim=0).cpu().numpy()
 
-        K = self.get_intrinsics(depth.shape[1], depth.shape[2])
+        K = ZoeDepthEstimator.get_intrinsics(depth.shape[1], depth.shape[2])
         Kinv = np.linalg.inv(K)
         if R is None:
             R = np.eye(3)
@@ -75,8 +78,9 @@ class ZoeDepthEstimator(DepthEstimator):
         # depth_2 = pts3D_2[:, :, :, 2, :]  # b,1,h,w
         return torch.from_numpy(pts3D_2[:, :, :, :3, 0][0])
 
-    def points_to_depth_merged(self, points, mod_ids, output_size=(512, 512), R=None, t=None, max_depth_value=float('inf')):
-        K = self.get_intrinsics(output_size[1], output_size[0])
+    @staticmethod
+    def points_to_depth_merged(points, mod_ids, output_size=(512, 512), R=None, t=None, max_depth_value=float('inf')):
+        K = ZoeDepthEstimator.get_intrinsics(output_size[1], output_size[0])
         if R is None:
             R = np.eye(3)
         if t is None:

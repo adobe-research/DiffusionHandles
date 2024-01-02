@@ -4,11 +4,12 @@ import torchvision
 from PIL import Image
 import cv2
 import scipy.ndimage
+from diffusers import DDIMScheduler
 
 from lang_sam import LangSAM
 
 from diffhandles.zoe_depth_estimator import ZoeDepthEstimator
-from diffhandles.null_inversion import NullInversion
+from diffhandles.stable_null_inverter import StableNullInverter
 from diffhandles.stable_diffuser import StableDiffuser
 from diffhandles.lama_inpainter import LamaInpainter
 from diffhandles.utils import max_pool_numpy, poisson_solve, transform_point_cloud, solve_laplacian_depth, pack_correspondences
@@ -19,20 +20,22 @@ class ImageEditor:
 
         # Zoe Depth Estimator, for estimating the depth of the input image
         # https://github.com/isl-org/ZoeDepth
-        self.depth_estimator = ZoeDepthEstimator()
-        
+        self.depth_estimator_class = ZoeDepthEstimator
+
         # Language Segment Anything Model, for selecting the foreground object
         # https://github.com/luca-medeiros/lang-segment-anything
-        self.foreground_segmenter = LangSAM()
+        self.foreground_segmenter_class = LangSAM
 
         # TODO: use a single diffuser model for inversion and inference
-        # TODO: even when not using a single diffuser model, make sure versions used for inversion and inference match
+        # TODO: even when not using a single diffuser model, make sure versions used for inversion and guided inference match
+        self.diffuser_class = StableDiffuser
         self.diffuser = None
+        # self.diffuser = None
         # self.inverter = NullInversion(self.diffuser)
 
         # LaMa, for removing the foreground object from the input image
         # https://github.com/advimman/lama
-        self.inpainter = LamaInpainter()
+        self.inpainter_class = LamaInpainter
 
         self.img_res = 512
 
@@ -62,21 +65,21 @@ class ImageEditor:
         self.activations2 = None
         self.activations3 = None
 
-        self.device = self.depth_estimator.device
+        self.device = torch.device('cpu')
 
     def to(self, device: torch.device = None):
-        if self.depth_estimator is not None:
-            self.depth_estimator.to(device=device)
+        # if self.depth_estimator is not None:
+        #     self.depth_estimator.to(device=device)
 
         if self.diffuser is not None:
             self.diffuser.to(device=device)
 
-        if self.foreground_segmenter is not None:
-            self.foreground_segmenter.sam.model.to(device=device)
-            self.foreground_segmenter.device = device
-        
-        if self.inpainter is not None:
-            self.inpainter.to(device=device)
+        # if self.foreground_segmenter is not None:
+        #     self.foreground_segmenter.sam.model.to(device=device)
+        #     self.foreground_segmenter.device = device
+
+        # if self.inpainter is not None:
+        #     self.inpainter.to(device=device)
 
         self.device = device
 
@@ -89,30 +92,63 @@ class ImageEditor:
 
     def set_input_image(self, img: torch.Tensor, prompt: str = ""):
 
+        # remove information about previous image
+        if self.diffuser is not None:
+            del self.diffuser
+        self.diffuser = None
+        self.bg_pts = None
+        self.bg_img = None
+        self.bg_depth = None
+        self.bg_phrase = None
+        self.fg_mask = None
+        self.fg_phrase = None
+        self.attentions = None
+        self.activations = None
+        self.activations2 = None
+        self.activations3 = None
+
         # check image resolution
         if img.shape[-2:] != (self.img_res, self.img_res):
             raise ValueError(f"Image must be of size {self.img_res}x{self.img_res}.")
 
+        self.img = img
         self.prompt = prompt
 
         # esimate depth
         # self.depth = np.array(Image.fromarray(self.depth_estimator(img)))
-        self.depth = self.depth_estimator(img)
+        depth_estimator = ZoeDepthEstimator()
+        depth_estimator.to(self.device)
+        with torch.no_grad():
+            self.depth = depth_estimator.estimate_depth(img=self.img)
+        del depth_estimator
 
         # get point cloud from depth
-        self.pts = self.depth_estimator.depth_to_points(self.depth[None])
+        self.pts = self.depth_estimator_class.depth_to_points(self.depth)
 
-        diffuser = StableDiffuser()
-        inverter = NullInversion(diffuser)
+        # invert image to get noise and null text that can be used to reproduce the image
+        diffuser = self.diffuser_class(custom_unet=False)
+        # # TEMP! (comment in above)
+        # from diffusers import StableDiffusionDepth2ImgPipeline, DDIMScheduler
+        # scheduler = DDIMScheduler(
+        #     beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
+        # diffuser = StableDiffusionDepth2ImgPipeline.from_pretrained("stabilityai/stable-diffusion-2-depth", scheduler=scheduler).to(self.device)
+        # diffuser.disable_xformers_memory_efficient_attention()
+        # # TEMP!
+        diffuser.to(self.device)
+        inverter = StableNullInverter(diffuser)
         _, self.inverted_noise, self.inverted_null_text = inverter.invert(
             target_img=self.img, depth=self.depth, prompt=self.prompt, num_inner_steps=5 ,verbose=True)
-        # del diffuser
-        # del inverter
+        del inverter
+        del diffuser
 
     def select_foreground(self, fg_phrase: str, bg_phrase: str = ""):
+
+        if self.depth is None:
+            raise ValueError("Input image must be set before selecting foreground.")
+
         self.fg_phrase = fg_phrase
         self.bg_phrase = bg_phrase
-        
+
         # get foreground object mask
         self.fg_mask = self.foreground_mask(fg_prompt=self.fg_phrase)
 
@@ -130,18 +166,22 @@ class ImageEditor:
             scipy.ndimage.binary_dilation(self.fg_mask, iterations=15))
 
         # get point cloud from background depth
-        self.bg_pts = self.depth_estimator.depth_to_points(self.bg_depth[None])
+        self.bg_pts = self.depth_estimator_class.depth_to_points(self.bg_depth[None])
 
         # perform first diffusion inference pass to get intermediate features
         # TODO: Can this be done once when loading the image? Are phrases needed here?
         # Can foreground and background features be separated after computing this forward pass, so that phrases are not needed in the forward pass?
-        self.diffuser = StableDiffuser(custom_unet=True)
+        self.diffuser = self.diffuser_class(custom_unet=True)
         self.diffuser.to(self.device)
-        self.attentions, self.activations, self.activations2, self.activations3 = self.diffuser.initial_inference(
-            latents=self.inverted_noise, depth=self.depth, uncond_embeddings=self.inverted_null_text,
-            prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase])
+        with torch.no_grad:
+            self.attentions, self.activations, self.activations2, self.activations3 = self.diffuser.initial_inference(
+                latents=self.inverted_noise, depth=self.depth, uncond_embeddings=self.inverted_null_text,
+                prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase])
 
     def transform_foreground(self, rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
+
+        if self.activations is None:
+            raise ValueError("Foreground must be selected before transforming it.")
 
         # 3d-transform depth and features
         transformed_depth, target_mask, correspondences = self.transform_depth(
@@ -151,11 +191,12 @@ class ImageEditor:
             raise ValueError(f"Transformed depth must be of size {self.img_res}x{self.img_res}.")
 
         # perform second diffusion inference pass guided by the 3d-transformed features
-        output_img = self.diffuser.guided_inference(
-            latents=self.inverted_noise, depth=transformed_depth, uncond_embeddings=self.inverted_null_text,
-            prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase],
-            attention_maps_orig=self.attentions, activations_orig=self.activations, activations2_orig=self.activations2, activations3_orig=self.activations3,
-            correspondences=correspondences)
+        with torch.no_grad:
+            output_img = self.diffuser.guided_inference(
+                latents=self.inverted_noise, depth=transformed_depth, uncond_embeddings=self.inverted_null_text,
+                prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase],
+                attention_maps_orig=self.attentions, activations_orig=self.activations, activations2_orig=self.activations2, activations3_orig=self.activations3,
+                correspondences=correspondences)
 
         return output_img
 
@@ -201,7 +242,7 @@ class ImageEditor:
 
         (rendered_depth, occluded_pixels, target_mask,
          transformed_positions_x, transformed_positions_y, orig_visibility_mask
-         )  = self.depth_estimator.points_to_depth_merged(
+         )  = self.depth_estimator_class.points_to_depth_merged(
             points=reshaped_bg_pts,
             mod_ids=torch.from_numpy(new_mod_ids),
             output_size=(self.img_res, self.img_res),
@@ -278,7 +319,7 @@ class ImageEditor:
             torch.from_numpy(original_positions_y),
             torch.from_numpy(transformed_positions_x),
             torch.from_numpy(transformed_positions_y))
-            
+
         # img_tensor = np.array(cut_img)
         img_tensor = np.array(self.fg_mask) # TODO: check that this works
         ref_mask = (img_tensor[:, :] == 255)
@@ -336,15 +377,19 @@ class ImageEditor:
         return lap_inpainted_depth_map, target_mask_cleaned, correspondences
 
     def foreground_mask(self, fg_prompt: str):
-        masks, boxes, phrases, logits = self.foreground_segmenter.predict(
-            image_pil=torchvision.transforms.functional.to_pil_image(self.img),
+        foreground_segmenter = self.foreground_segmenter_class()
+        foreground_segmenter.sam.model.to(self.device)
+        foreground_segmenter.device = self.device
+        # with torch.no_grad():
+        masks, boxes, phrases, logits = foreground_segmenter.predict(
+            image_pil=torchvision.transforms.functional.to_pil_image(self.img[0]),
             text_prompt=fg_prompt)
+        del foreground_segmenter
         return masks[0]
 
     def remove_foreground(self, img, foreground_mask):
-        return self.inpainter.inpaint(img=img, mask=foreground_mask)
-
-    def invert_image(self, img):
-        pass
-
-
+        inpainter = self.inpainter_class()
+        inpainter.to(self.device)
+        bg_img = inpainter.inpaint(img=img, mask=foreground_mask)
+        del inpainter
+        return bg_img
