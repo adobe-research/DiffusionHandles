@@ -2,7 +2,7 @@ import numpy as np
 import torch
 import torchvision
 from PIL import Image
-import cv2
+
 import scipy.ndimage
 from diffusers import DDIMScheduler
 
@@ -12,7 +12,8 @@ from diffhandles.zoe_depth_estimator import ZoeDepthEstimator
 from diffhandles.stable_null_inverter import StableNullInverter
 from diffhandles.stable_diffuser import StableDiffuser
 from diffhandles.lama_inpainter import LamaInpainter
-from diffhandles.utils import max_pool_numpy, poisson_solve, transform_point_cloud, solve_laplacian_depth, pack_correspondences
+from diffhandles.depth_transform import transform_depth
+from diffhandles.utils import solve_laplacian_depth
 
 class ImageEditor:
 
@@ -85,6 +86,70 @@ class ImageEditor:
 
     ### High-level functions ###
 
+    def save(self, filename):
+        state = {
+            "depth_estimator_class": self.depth_estimator_class,
+            "foreground_segmenter_class": self.foreground_segmenter_class,
+            "diffuser_class": self.diffuser_class,
+            "has_diffuser": self.diffuser is not None,
+            "inpainter_class": self.inpainter_class,
+            "img_res": self.img_res,
+            "img": self.img,
+            "depth": self.depth,
+            "pts": self.pts,
+            "prompt": self.prompt,
+            "bg_pts": self.bg_pts,
+            "bg_img": self.bg_img,
+            "bg_depth": self.bg_depth,
+            "bg_phrase": self.bg_phrase,
+            "fg_mask": self.fg_mask,
+            "fg_phrase": self.fg_phrase,
+            "inverted_noise": self.inverted_noise,
+            "inverted_null_text": self.inverted_null_text,
+            "attentions": self.attentions,
+            "activations": self.activations,
+            "activations2": self.activations2,
+            "activations3": self.activations3,
+            "device": self.device,
+        }
+        torch.save(state, filename)
+    
+    @staticmethod
+    def load(filename):
+        image_editor = ImageEditor()
+        
+        state = torch.load(filename)
+        
+        image_editor.depth_estimator_class = state["depth_estimator_class"]
+        image_editor.foreground_segmenter_class = state["foreground_segmenter_class"]
+        image_editor.diffuser_class = state["diffuser_class"]
+        image_editor.inpainter_class = state["inpainter_class"]
+        image_editor.img_res = state["img_res"]
+        image_editor.img = state["img"]
+        image_editor.depth = state["depth"]
+        image_editor.pts = state["pts"]
+        image_editor.prompt = state["prompt"]
+        image_editor.bg_pts = state["bg_pts"]
+        image_editor.bg_img = state["bg_img"]
+        image_editor.bg_depth = state["bg_depth"]
+        image_editor.bg_phrase = state["bg_phrase"]
+        image_editor.fg_mask = state["fg_mask"]
+        image_editor.fg_phrase = state["fg_phrase"]
+        image_editor.inverted_noise = state["inverted_noise"]
+        image_editor.inverted_null_text = state["inverted_null_text"]
+        image_editor.attentions = state["attentions"]
+        image_editor.activations = state["activations"]
+        image_editor.activations2 = state["activations2"]
+        image_editor.activations3 = state["activations3"]
+        image_editor.device = state["device"]
+
+        # diffuser is not saved to file, so it must be recreated
+        if state["has_diffuser"]:
+            image_editor.diffuser = image_editor.diffuser_class(custom_unet=True)
+            image_editor.diffuser.to(image_editor.device)
+
+        return image_editor
+
     def edit_image(self, img: torch.Tensor, prompt: str, fg_phrase: str, bg_phrase: str = "", rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
         self.set_input_image(img=img, prompt=prompt)
         self.select_foreground(fg_phrase=fg_phrase, bg_phrase=bg_phrase)
@@ -125,22 +190,6 @@ class ImageEditor:
         # get point cloud from depth
         self.pts = self.depth_estimator_class.depth_to_points(self.depth)
 
-        # invert image to get noise and null text that can be used to reproduce the image
-        diffuser = self.diffuser_class(custom_unet=False)
-        # # TEMP! (comment in above)
-        # from diffusers import StableDiffusionDepth2ImgPipeline, DDIMScheduler
-        # scheduler = DDIMScheduler(
-        #     beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
-        # diffuser = StableDiffusionDepth2ImgPipeline.from_pretrained("stabilityai/stable-diffusion-2-depth", scheduler=scheduler).to(self.device)
-        # diffuser.disable_xformers_memory_efficient_attention()
-        # # TEMP!
-        diffuser.to(self.device)
-        inverter = StableNullInverter(diffuser)
-        _, self.inverted_noise, self.inverted_null_text = inverter.invert(
-            target_img=self.img, depth=self.depth, prompt=self.prompt, num_inner_steps=5 ,verbose=True)
-        del inverter
-        del diffuser
-
     def select_foreground(self, fg_phrase: str, bg_phrase: str = ""):
 
         if self.depth is None:
@@ -156,42 +205,80 @@ class ImageEditor:
         self.bg_img = self.remove_foreground(img=self.img, foreground_mask=self.fg_mask)
 
         # estimate depth from background image
-        initial_bg_depth = np.array(Image.fromarray(self.model_zoe_nk.infer_pil(self.bg_img)))
+        depth_estimator = ZoeDepthEstimator()
+        depth_estimator.to(self.device)
+        with torch.no_grad():
+            initial_bg_depth = depth_estimator.estimate_depth(img=self.bg_img)
+        del depth_estimator
+        # initial_bg_depth = np.array(Image.fromarray(self.model_zoe_nk.infer_pil(self.bg_img)))
 
         # infill hole in the depth of the input image (where the foreground object used to be)
         # with the depth of the background image
         self.bg_depth = solve_laplacian_depth(
-            self.depth,
-            initial_bg_depth,
-            scipy.ndimage.binary_dilation(self.fg_mask, iterations=15))
+            self.depth[0, 0].cpu().numpy(),
+            initial_bg_depth[0, 0].cpu().numpy(),
+            scipy.ndimage.binary_dilation(self.fg_mask[0, 0].cpu().numpy(), iterations=15))
+        self.bg_depth = torch.from_numpy(self.bg_depth).to(device=self.device)[None, None]
 
         # get point cloud from background depth
-        self.bg_pts = self.depth_estimator_class.depth_to_points(self.bg_depth[None])
+        self.bg_pts = self.depth_estimator_class.depth_to_points(self.bg_depth)
+
+        # Need to 3d-transform the depth with an identity transform
+        # to get the same depth format as in the guided inference pass
+        # where transformed depth is used.
+        # (The depth is actually converted to disparity, which the stable diffuser expects as input.)
+        # TODO: can we directly call `points_to_depth_merged` here to transform `self.pts` directly to disparity
+        # and avoid all the overhead of transforming the point cloud? This would also allow us to do this only once
+        # when loading the image instead of each time the foreground is transformed.
+        depth, target_mask, correspondences = transform_depth(
+            pts=self.pts, bg_pts=self.bg_pts, fg_mask=self.fg_mask,
+            intrinsics=self.diffuser_class.get_depth_intrinsics(h=self.img_res, w=self.img_res),
+            img_res=self.img_res,
+            rot_angle=0.0,
+            rot_axis=torch.tensor([0.0, 1.0, 0.0]),
+            translation=torch.tensor([0.0, 0.0, 0.0]),
+            )
+
+        # invert image to get noise and null text that can be used to reproduce the image
+        diffuser = self.diffuser_class(custom_unet=False)
+        diffuser.to(self.device)
+        inverter = StableNullInverter(diffuser)
+        _, self.inverted_noise, self.inverted_null_text = inverter.invert(
+            target_img=self.img, depth=depth, prompt=self.prompt, num_inner_steps=5 ,verbose=True)
+        del inverter
+        del diffuser
 
         # perform first diffusion inference pass to get intermediate features
         # TODO: Can this be done once when loading the image? Are phrases needed here?
         # Can foreground and background features be separated after computing this forward pass, so that phrases are not needed in the forward pass?
         self.diffuser = self.diffuser_class(custom_unet=True)
         self.diffuser.to(self.device)
-        with torch.no_grad:
-            self.attentions, self.activations, self.activations2, self.activations3 = self.diffuser.initial_inference(
-                latents=self.inverted_noise, depth=self.depth, uncond_embeddings=self.inverted_null_text,
+        with torch.no_grad():
+            self.attentions, self.activations, self.activations2, self.activations3, recon_img = self.diffuser.initial_inference(
+                latents=self.inverted_noise, depth=depth, uncond_embeddings=self.inverted_null_text,
                 prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase])
+
+        # torchvision.utils.save_image(recon_img, '../../data/test/recon_img.png') # TEMP!
 
     def transform_foreground(self, rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
 
         if self.activations is None:
             raise ValueError("Foreground must be selected before transforming it.")
 
-        # 3d-transform depth and features
-        transformed_depth, target_mask, correspondences = self.transform_depth(
-            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation)
+        # 3d-transform depth
+        transformed_depth, target_mask, correspondences = transform_depth(
+            pts=self.pts, bg_pts=self.bg_pts, fg_mask=self.fg_mask,
+            intrinsics=self.diffuser_class.get_depth_intrinsics(h=self.img_res, w=self.img_res),
+            img_res=self.img_res,
+            rot_angle=rot_angle,
+            rot_axis=rot_axis,
+            translation=translation)
 
         if transformed_depth.shape[-2:] != (self.img_res, self.img_res):
             raise ValueError(f"Transformed depth must be of size {self.img_res}x{self.img_res}.")
 
         # perform second diffusion inference pass guided by the 3d-transformed features
-        with torch.no_grad:
+        with torch.no_grad():
             output_img = self.diffuser.guided_inference(
                 latents=self.inverted_noise, depth=transformed_depth, uncond_embeddings=self.inverted_null_text,
                 prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase],
@@ -202,180 +289,6 @@ class ImageEditor:
 
     ### Lower-level functions ###
 
-    def transform_depth(self, rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
-
-        pts, mod_ids = transform_point_cloud(
-            pts=self.pts,
-            axis=np.array(rot_axis),
-            angle_degrees=rot_angle,
-            x=translation[0].item(),
-            y=translation[1].item(),
-            z=translation[2].item(),
-            mask=self.fg_mask)
-
-        #points = pts.reshape((self.img_res**2, 3))
-
-        #orig_pts = pts
-
-
-        if isinstance(mod_ids, np.ndarray):
-            mod_ids = torch.from_numpy(mod_ids)
-
-        #reproject points to depth map
-
-        reshaped_bg_pts = self.bg_pts.reshape((self.img_res**2, 3))
-
-        reshaped_pts = pts.reshape((self.img_res**2, 3))
-
-        new_mod_ids = np.zeros(len(reshaped_bg_pts) + len(reshaped_pts[mod_ids]), dtype = np.uint8)
-
-        new_mod_ids[np.arange(new_mod_ids.size) > len(reshaped_bg_pts) - 1] = 1
-
-        modded_id_list = np.where(mod_ids)[0]
-
-        idx_to_coord = {}
-
-        for idx in modded_id_list:
-            pt = reshaped_pts[idx]
-            reshaped_bg_pts = np.vstack((reshaped_bg_pts, pt))
-            idx_to_coord[len(reshaped_bg_pts) - 1] = divmod(idx, self.img_res)
-
-        (rendered_depth, occluded_pixels, target_mask,
-         transformed_positions_x, transformed_positions_y, orig_visibility_mask
-         )  = self.depth_estimator_class.points_to_depth_merged(
-            points=reshaped_bg_pts,
-            mod_ids=torch.from_numpy(new_mod_ids),
-            output_size=(self.img_res, self.img_res),
-            max_depth_value=reshaped_bg_pts[:, 2].max()
-        )
-
-        #plot_img(rendered_depth)
-
-        infer_visible_original = np.zeros_like(mod_ids.reshape((self.img_res,self.img_res)), dtype = np.uint8)
-
-        original_idxs = [idx_to_coord[key] for key in np.where(orig_visibility_mask)[0]]
-
-        for idx in original_idxs:
-            infer_visible_original[idx] = 1
-
-        original_positions_y, original_positions_x = np.where(infer_visible_original)
-
-        #target_mask_binary = target_mask.to(torch.int)
-        # Convert the target mask to uint8
-        #target_mask_uint8 = target_mask_binary.detach().cpu().numpy().astype(np.uint8) * 255
-
-        target_mask_uint8 = target_mask.astype(np.uint8)*255
-
-        # Define a kernel for the closing operation (you can adjust the size and shape)
-        open_kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.img_res // 250 , self.img_res // 250))
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (self.img_res // 50 , self.img_res // 50))
-
-        # Perform the closing operation
-        #target_mask_cleaned = cv2.morphologyEx(target_mask_uint8, cv2.MORPH_CLOSE, kernel)
-
-        target_mask_cleaned = target_mask_uint8
-
-        #target_mask_cleaned = cv2.medianBlur(target_mask_cleaned, 3)
-        #target_mask_cleaned = cv2.medianBlur(target_mask_cleaned, 3)
-
-
-        # Perform the closing operation
-        #target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_OPEN, open_kernel)
-
-
-        # Perform the closing operation
-        target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_CLOSE, kernel)
-
-        # Perform the closing operation
-        target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_OPEN, open_kernel)
-
-
-        # Perform the closing operation
-        #target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_CLOSE, kernel)
-
-
-
-        # Filter correspondences based on the mask
-        filtered_original_x = []
-        filtered_original_y = []
-        filtered_transformed_x = []
-        filtered_transformed_y = []
-
-        for ox, oy, tx, ty in zip(original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y):
-            if target_mask_cleaned[ty, tx] == 255:  # if the original point lies within the mask
-                filtered_original_x.append(ox)
-                filtered_original_y.append(oy)
-                filtered_transformed_x.append(tx)
-                filtered_transformed_y.append(ty)
-
-        original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y = np.array(filtered_original_x), np.array(filtered_original_y), np.array(filtered_transformed_x), np.array(filtered_transformed_y)
-
-        #save_positions(original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y, save_path + 'positions.npy')
-
-        # correspondences = np.stack((original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y), axis=-1)
-        correspondences = pack_correspondences(
-            torch.from_numpy(original_positions_x),
-            torch.from_numpy(original_positions_y),
-            torch.from_numpy(transformed_positions_x),
-            torch.from_numpy(transformed_positions_y))
-
-        # img_tensor = np.array(cut_img)
-        img_tensor = np.array(self.fg_mask) # TODO: check that this works
-        ref_mask = (img_tensor[:, :] == 255)
-        mask = np.zeros_like(ref_mask, dtype = np.uint8)
-        mask[ref_mask.nonzero()] = 255
-        mask = max_pool_numpy(mask, 512 // self.img_res)
-        occluded_mask = mask
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-        occluded_mask = cv2.dilate(occluded_mask.astype(np.uint8), kernel)
-
-        #rendered_depth = rendered_depth.squeeze()
-        #bg_img = bg_img[:,:,0]
-
-        #visualize_img(rendered_depth.detach().cpu().numpy(), save_path + 'rendered_depth')
-
-        # visualize_img(target_mask_cleaned, 'clean_target_mask')
-        # visualize_img(target_mask_uint8, 'init_target_mask')
-
-        #plot_img(target_mask_cleaned)
-
-
-        noise_mask = target_mask_uint8.astype(int) - target_mask_cleaned.astype(int)
-
-        final_mask = target_mask_cleaned.astype(int) - target_mask_uint8.astype(int)
-        final_mask[final_mask < 0] = 0
-        noise_mask[noise_mask < 0] = 0
-
-        #plot_img(final_mask)
-
-        inpaint_mask = final_mask + noise_mask #+ occluded_mask
-        inpaint_mask = (inpaint_mask > 0).astype(np.uint8)
-
-        # visualize_img(inpaint_mask, 'inpaint_mask')
-
-        kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
-        inpaint_mask_dilated = cv2.dilate(inpaint_mask, kernel)
-
-        lap_inpainted_depth_map = poisson_solve(np.array(rendered_depth), inpaint_mask_dilated)
-
-        #lap_inpainted_depth_map[np.where(target_mask_cleaned == 0)] = 1 - bg_img[np.where(target_mask_cleaned == 0)]
-
-        img = lap_inpainted_depth_map
-        img = (img - img.min())/(img.max() - img.min())
-        img = (img*255).round().astype("uint8")
-
-        #plot_img(img)
-
-        #visualize_img(img,'fixed_depth_map_denoised')
-
-        img = target_mask_cleaned
-        img = (img - img.min())/(img.max() - img.min())
-        img = (img*255).round().astype("uint8")
-
-        return lap_inpainted_depth_map, target_mask_cleaned, correspondences
-
     def foreground_mask(self, fg_prompt: str):
         foreground_segmenter = self.foreground_segmenter_class()
         foreground_segmenter.sam.model.to(self.device)
@@ -385,11 +298,19 @@ class ImageEditor:
             image_pil=torchvision.transforms.functional.to_pil_image(self.img[0]),
             text_prompt=fg_prompt)
         del foreground_segmenter
-        return masks[0]
+        mask = masks[0, None, None, :, :].to(device=self.device, dtype=torch.float32)
+        return mask
 
     def remove_foreground(self, img, foreground_mask):
+        # dilate the foreground mask
+        dilate_amount = 2
+        foreground_mask = foreground_mask.cpu().numpy() > 0.5
+        foreground_mask = scipy.ndimage.binary_dilation(foreground_mask[0, 0], iterations=dilate_amount)[None, None, ...]
+        foreground_mask = torch.from_numpy(foreground_mask).to(device=self.device, dtype=torch.float32)
+        
+        # inpaint the foreground region to remove the foreground
         inpainter = self.inpainter_class()
         inpainter.to(self.device)
-        bg_img = inpainter.inpaint(img=img, mask=foreground_mask)
+        bg_img = inpainter.inpaint(image=img, mask=foreground_mask)
         del inpainter
         return bg_img

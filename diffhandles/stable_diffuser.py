@@ -7,6 +7,7 @@ import torch
 import numpy as np
 from transformers import CLIPTextModel, CLIPTokenizer
 from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
+from diffusers.image_processor import VaeImageProcessor
 from diffusers.configuration_utils import FrozenDict
 from diffusers.utils import deprecate
 from tqdm import tqdm
@@ -84,23 +85,76 @@ class StableDiffuser(Diffuser):
             feat_hw = (feat_hw, feat_hw)
         return (feat_hw[0], feat_hw[1], self.unet.config.out_channels)
     
+    @torch.no_grad()
+    def init_prompt(self, prompt: str):
+        uncond_input = self.tokenizer(
+            [""], padding="max_length", max_length=self.tokenizer.model_max_length,
+            return_tensors="pt"
+        )
+        uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[0]
+        text_input = self.tokenizer(
+            [prompt],
+            padding="max_length",
+            max_length=self.tokenizer.model_max_length,
+            truncation=True,
+            return_tensors="pt",
+        )
+        text_embeddings = self.text_encoder(text_input.input_ids.to(self.device))[0]
+        return torch.cat([uncond_embeddings, text_embeddings])
+
+    @torch.no_grad()
+    def init_depth(self, depth):
+        # resize depth map to match the size of the feature image (post vae encoding)
+        h, w = self.get_feature_shape()[:2]
+        # h, w = 64, 64 # TEMP! (comment in above)
+        depth = torch.nn.functional.interpolate(
+            depth,
+            size=(h, w),
+            mode="bicubic",
+            align_corners=False,
+        )
+        
+        # normalize depth to [0, 1]
+        return normalize_depth(depth)
+
+    @staticmethod
+    def get_depth_intrinsics(h: int, w: int):
+        """
+        Return intrinsics suitable for the input depth.
+        Intrinsics for a pinhole camera model.
+        Assume fov of 55 degrees and central principal point.
+        """
+        f = 0.5 * w / np.tan(0.5 * 6.24 * np.pi / 180.0) #car benchmark
+        #f = 0.5 * W / np.tan(0.5 * 7.18 * np.pi / 180.0) #airplane benchmark
+        #f = 0.5 * W / np.tan(0.5 * 14.9 * np.pi / 180.0) #chair, cup, lamp, stool benchmark        
+        #f = 0.5 * W / np.tan(0.5 * 7.23 * np.pi / 180.0) #plant benchmark            
+        f = 0.5 * w / np.tan(0.5 * 55 * np.pi / 180.0)    
+        cx = 0.5 * w
+        cy = 0.5 * h
+        return torch.tensor([
+            [f, 0, cx],
+            [0, f, cy],
+            [0, 0, 1]
+            ])
+
     def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str]):
 
-        depth = normalize_depth(depth)
+        depth = self.init_depth(depth)
+        # depth = normalize_depth(depth)
         
         # Get Object Positions
         object_positions = phrase_to_index(prompt, phrases)
 
         # Encode Classifier Embeddings
         uncond_input = self.tokenizer(
-            [""] * 1, padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
+            [""], padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
         )
         
         #uncond_embeddings = text_encoder(uncond_input.input_ids.to(device))[0]
 
         # Encode Prompt
         input_ids = self.tokenizer(
-                [prompt] * 1,
+                [prompt],
                 padding="max_length",
                 truncation=True,
                 max_length=self.tokenizer.model_max_length,
@@ -143,7 +197,7 @@ class StableDiffuser(Diffuser):
                 latent_model_input = latents #torch.cat([latents]) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 if(depth_iter):
-                    latent_model_input = torch.cat([latent_model_input, depth[0].view(1, 1, depth.shape[2], depth.shape[3])], dim=1)
+                    latent_model_input = torch.cat([latent_model_input, depth], dim=1)
 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -175,7 +229,7 @@ class StableDiffuser(Diffuser):
                 latent_model_input = torch.cat([latents]*2) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 if(depth_iter):
-                    latent_model_input = torch.cat([latent_model_input, depth], dim=1)
+                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
 
 
                 text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
@@ -201,10 +255,13 @@ class StableDiffuser(Diffuser):
                 torch.cuda.empty_cache()
                 timestep_num += 1
         
+        # # TEMP!
         # with torch.no_grad():
         #     image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-        #     image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pil")
-        #     image[0].save('output' + name + '.png')
+        #     image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+        # return attention_list, activation_list, activation2_list, activation3_list, image
+        # # TEMP! (comment back in below)
+        
         return attention_list, activation_list, activation2_list, activation3_list
 
     def guided_inference(
@@ -214,7 +271,8 @@ class StableDiffuser(Diffuser):
 
         processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
         
-        depth = normalize_depth(depth)
+        # depth = normalize_depth(depth)
+        depth = self.init_depth(depth)
         
         # Get Object Positions
         object_positions = phrase_to_index(prompt, phrases)
@@ -229,7 +287,7 @@ class StableDiffuser(Diffuser):
 
         # Encode Prompt
         input_ids = self.tokenizer(
-                [prompt] * 1,
+                [prompt],
                 padding="max_length",
                 truncation=True,
                 max_length=self.tokenizer.model_max_length,
@@ -267,7 +325,7 @@ class StableDiffuser(Diffuser):
                 latents = latents.requires_grad_(True)
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                latent_model_input = torch.cat([latent_model_input, depth[0].view(1,1,depth.shape[2], depth.shape[3])], dim=1)
+                latent_model_input = torch.cat([latent_model_input, depth], dim=1)
                                 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -387,7 +445,7 @@ class StableDiffuser(Diffuser):
                 latent_model_input = torch.cat([latents] * 2) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 if(depth_iter):
-                    latent_model_input = torch.cat([latent_model_input, depth], dim=1)
+                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
 
                 text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
 
@@ -410,12 +468,10 @@ class StableDiffuser(Diffuser):
                 torch.cuda.empty_cache()
             timestep_num += 1
                     
-        # with torch.no_grad():
-        #     image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-        #     image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pil")
-        #     image[0].save('output_depth_estimator.png')
-        #     return image[0]
-        return
+        with torch.no_grad():
+            image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
+            image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+        return image
 
     def process_correspondences(self, correspondences, img_res):
 
@@ -600,7 +656,7 @@ def retrieve_attention_maps(attn_down, attn_mid, attn_up, obj_idx, object_positi
     return attn_maps
 
 def phrase_to_index(prompt, phrases):
-    phrases = [x.strip() for x in phrases.split(';')]
+    phrases = [x.strip() for x in phrases]
     prompt_list = prompt.strip('.').split(' ')
     object_positions = []
     for obj in phrases:

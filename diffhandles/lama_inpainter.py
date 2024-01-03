@@ -60,16 +60,15 @@ class LamaInpainter(Inpainter):
             self.model.to(device)
     
     def inpaint(self, image, mask):
-        image = image.squeeze(0)
-        mask = mask.squeeze(0)
         batch_size = image.shape[0]
 
         original_img_size = None
-        if self.pad_to_modulo is not None and self.pad_to_modulo > 1:
-            pad_to_modulo(img=image, mod=self.pad_to_modulo)
-            pad_to_modulo(img=mask, mod=self.pad_to_modulo)
+        if self.pad_to_modulo is not None and self.pad_to_modulo > 1 and any(x % self.pad_to_modulo != 0 for x in image.shape[-2:]):
             original_img_size = image.shape[-2:]
+            image = pad_to_modulo(img=image, mod=self.pad_to_modulo)
+            mask = pad_to_modulo(img=mask, mod=self.pad_to_modulo)
 
+        inpainted_images = []
         for b in range(batch_size):
             # arrange inputs into a dict (required by the model)
             batch = {
@@ -97,9 +96,12 @@ class LamaInpainter(Inpainter):
                     # unpad image back to original size
                     if original_img_size is not None:
                         orig_height, orig_width = original_img_size
-                        inpainted_image = inpainted_image[:orig_height, :orig_width]
+                        inpainted_image = inpainted_image[..., :orig_height, :orig_width]
 
             inpainted_image = torch.clamp(inpainted_image, 0, 1)
+            inpainted_images.append(inpainted_image)
+        
+        inpainted_images = torch.cat(inpainted_images, dim=0)
 
         return inpainted_image
 

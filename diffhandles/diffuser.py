@@ -10,6 +10,13 @@ class Diffuser:
     def to(self, device: torch.device = None, dtype: torch.dtype = None):
         raise NotImplementedError
 
+    @staticmethod
+    def get_depth_intrinsics(h: int, w: int):
+        """
+        Return intrinsics suitable for the input depth.
+        """
+        raise NotImplementedError
+
     @torch.no_grad()
     def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str]):
         raise NotImplementedError

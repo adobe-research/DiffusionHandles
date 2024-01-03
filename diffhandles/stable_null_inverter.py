@@ -110,39 +110,6 @@ class StableNullInverter(NullInverter):
         return latents
 
     @torch.no_grad()
-    def init_prompt(self, prompt: str):
-        uncond_input = self.model.tokenizer(
-            [""], padding="max_length", max_length=self.model.tokenizer.model_max_length,
-            return_tensors="pt"
-        )
-        uncond_embeddings = self.model.text_encoder(uncond_input.input_ids.to(self.model.device))[0]
-        text_input = self.model.tokenizer(
-            [prompt],
-            padding="max_length",
-            max_length=self.model.tokenizer.model_max_length,
-            truncation=True,
-            return_tensors="pt",
-        )
-        text_embeddings = self.model.text_encoder(text_input.input_ids.to(self.model.device))[0]
-        self.context = torch.cat([uncond_embeddings, text_embeddings])
-        self.prompt = prompt
-
-    @torch.no_grad()
-    def init_depth(self, depth):
-        # resize depth map to match the size of the feature image (post vae encoding)
-        h, w = self.model.get_feature_shape()[:2]
-        # h, w = 64, 64 # TEMP! (comment in above)
-        depth = torch.nn.functional.interpolate(
-            depth,
-            size=(h, w),
-            mode="bicubic",
-            align_corners=False,
-        )
-        
-        # normalize depth to [0, 1]
-        self.depth = normalize_depth(depth)
-
-    @torch.no_grad()
     def ddim_loop(self, latent):
         uncond_embeddings, cond_embeddings = self.context.chunk(2)
         all_latent = [latent]
@@ -201,8 +168,9 @@ class StableNullInverter(NullInverter):
     
     def invert(self, target_img: torch.Tensor, depth: torch.Tensor, prompt: str, num_inner_steps=10, early_stop_epsilon=1e-5, verbose=False):
         
-        self.init_depth(depth)
-        self.init_prompt(prompt)
+        self.prompt = prompt
+        self.depth = self.model.init_depth(depth)
+        self.context = self.model.init_prompt(prompt)
         #ptp_utils.register_attention_control(self.model, None)
         # target_img = load_512(image_path)
 
