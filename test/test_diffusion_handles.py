@@ -6,9 +6,6 @@ from lang_sam import LangSAM
 
 from diffhandles import DiffusionHandles
 from diffhandles.zoe_depth_estimator import ZoeDepthEstimator
-from diffhandles.stable_null_inverter import StableNullInverter
-from diffhandles.stable_diffuser import StableDiffuser
-from diffhandles.lama_inpainter import LamaInpainter
 from diffhandles.lama_inpainter import LamaInpainter
 
 
