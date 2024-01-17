@@ -2,34 +2,23 @@
 
 ## Installation
 
-Create environment:
+Create conda environment:
 ```bash
 conda create -n diffusionhandles python=3.9
 conda activate diffusionhandles
 ```
 
-Optional: Install Cuda Toolkit if the correct nvcc version is not already installed:
-(The nvcc cuda version needs to match the pytorch version you are going to install latern on.)
-```bash
-conda install cuda-toolkit=11.7 -c nvidia
-```
-
-(Just as reminder, when using multiple cuda versions, make sure you have the right one active, for example with `update-alternatives`:)
-```bash
-sudo update-alternatives --config cuda
-```
-
 Install PyTorch:
-(The PyTorch cuda version needs to match the nvcc cuda version you installed earlier)
-(PyTorch<2.0 is required by ZoeDepth - updating it to work with PyTorch >= 2.0 would probably be easy, but would require modifying the ZoeDepth source code)
 ```bash
-pip install torch==1.13 torchvision
+conda install pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
+```
+
+Optional: The NVCC compiler is needed for the CUDA version that PyTorch is using (12.1 in the example above). If the correct version is not already installed, you can install the Cuda Toolkit for the right version as conda package (this should automatically change the nvcc path when the conda evironment is active):
+```bash
+conda install cudatoolkit-dev=12.1 -c conda-forge
 ```
 
 Install Diffusion Handles as editable package:
 ```bash
 pip install -e .
 ```
-
-TODO: create internal repo for ZoeDepth fixed for PyTorch >= 2.0 and install it from there
-TODO: create internal repo for lang-sam with fixed dependencies (huggingface-hub version can also be larger) and install it from there

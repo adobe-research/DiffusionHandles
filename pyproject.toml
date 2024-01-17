@@ -19,13 +19,14 @@ authors = [
 
 [tool.poetry.dependencies]
 python = ">=3.9, <3.11"
-torch = "1.13" # required by ZoeDepth (PyTorch >= 2.0 does not accept np.int64 instead of int in the torch.nn.interpolate args)
+torch = ">=2.0"
 torchvision = "*"
 trimesh = "*"
 scipy = "*"
 timm = "0.6.12" # required by ZoeDepth (the pretrained weights that are loaded from torch hub are for this version)
-diffusers = "==0.23" # version >=0.24 requires huggingface-hub>=0.19.4, which conflicts with lang-sam's requirements (even though it probably works, so updaring lang-sam's requirements would probably fix this)
+diffusers = ">=0.23"
 transformers = ">=4.33"
 accelerate = "*"
+zoedepth = { git = "https://github.com/paulguerrero/ZoeDepth.git" }
 saicinpainting = { git = "https://github.com/paulguerrero/lama.git" }
-lang-sam = { git = "https://github.com/luca-medeiros/lang-segment-anything.git" }
+lang-sam = { git = "https://github.com/paulguerrero/lang-sam" }

@@ -1,6 +1,8 @@
 import torch
 import numpy as np
 from PIL import Image
+from zoedepth.models.builder import build_model
+from zoedepth.utils.config import get_config
 
 from diffhandles.depth_estimator import DepthEstimator
 
@@ -8,7 +10,8 @@ class ZoeDepthEstimator(DepthEstimator):
 
     def __init__(self):
         super().__init__()
-        self.model = torch.hub.load("isl-org/ZoeDepth", "ZoeD_NK", pretrained=True)
+        conf = get_config("zoedepth_nk", "infer")
+        self.model = build_model(conf)
 
     def to(self, device: torch.device):
         self.model.to(device)

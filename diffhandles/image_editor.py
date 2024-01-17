@@ -254,7 +254,7 @@ class ImageEditor:
         self.diffuser = self.diffuser_class(custom_unet=True)
         self.diffuser.to(self.device)
         with torch.no_grad():
-            self.attentions, self.activations, self.activations2, self.activations3, recon_img = self.diffuser.initial_inference(
+            self.attentions, self.activations, self.activations2, self.activations3 = self.diffuser.initial_inference(
                 latents=self.inverted_noise, depth=depth, uncond_embeddings=self.inverted_null_text,
                 prompt=self.prompt, phrases=[self.fg_phrase, self.bg_phrase])
 
