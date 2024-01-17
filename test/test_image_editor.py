@@ -1,10 +1,10 @@
 import torch
 import torchvision
 from PIL import Image
+
 from diffhandles import ImageEditor
 
-
-def test():
+def test_image_editor():
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # sunflower stop-motion rotation
@@ -46,4 +46,4 @@ def save_image(img: torch.Tensor, path: str):
     img.save(path)
 
 if __name__ == '__main__':
-    test()
+    test_image_editor()

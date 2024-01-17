@@ -12,10 +12,12 @@ Install PyTorch:
 ```bash
 conda install pytorch torchvision pytorch-cuda=12.1 -c pytorch -c nvidia
 ```
+The NVCC compiler is needed for the CUDA version that PyTorch is using (12.1 in the example above). Make sure `nvcc --version` shows the same CUDA version that you used to install PyTorch, otherwise install CUDA as described here for example: https://docs.nvidia.com/cuda/cuda-installation-guide-linux/contents.html
 
-Optional: The NVCC compiler is needed for the CUDA version that PyTorch is using (12.1 in the example above). If the correct version is not already installed, you can install the Cuda Toolkit for the right version as conda package (this should automatically change the nvcc path when the conda evironment is active):
+Clone the Diffusion Handles repository:
 ```bash
-conda install cudatoolkit-dev=12.1 -c conda-forge
+git clone https://github.com/karranpandey/diffusionhandles.git
+cd diffusionhandles
 ```
 
 Install Diffusion Handles as editable package:

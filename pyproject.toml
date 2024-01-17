@@ -23,7 +23,7 @@ torch = ">=2.0"
 torchvision = "*"
 trimesh = "*"
 scipy = "*"
-timm = "0.6.12" # required by ZoeDepth (the pretrained weights that are loaded from torch hub are for this version)
+timm = "0.6.12" # required by ZoeDepth (the pretrained weights are for this version and do not work with some later versions)
 diffusers = ">=0.23"
 transformers = ">=4.33"
 accelerate = "*"

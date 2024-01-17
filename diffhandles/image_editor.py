@@ -1,10 +1,7 @@
-import numpy as np
 import torch
 import torchvision
-from PIL import Image
 
 import scipy.ndimage
-from diffusers import DDIMScheduler
 
 from lang_sam import LangSAM
 
