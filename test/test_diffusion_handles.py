@@ -33,13 +33,13 @@ def test_diffusion_handles():
         raise ValueError(f"Image must be of size {diff_handles.img_res}x{diff_handles.img_res}.")
 
     # segment the foreground object using SAM
-    inpainter = LangSAM()
-    inpainter.sam.model.to(device)
-    inpainter.device = device
-    masks, boxes, phrases, logits = inpainter.predict(
+    segmenter = LangSAM()
+    segmenter.sam.model.to(device)
+    segmenter.device = device
+    masks, boxes, phrases, logits = segmenter.predict(
         image_pil=torchvision.transforms.functional.to_pil_image(img[0]),
         text_prompt=fg_phrase)
-    del inpainter
+    del segmenter
     fg_mask = masks[0, None, None, :, :].to(device=device, dtype=torch.float32)
 
     # inpaint the foreground region to get a background image without the foreground object
