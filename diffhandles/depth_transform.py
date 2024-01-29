@@ -10,7 +10,8 @@ from diffhandles.utils import pack_correspondences
 def transform_depth(
         pts: torch.Tensor, bg_pts: torch.Tensor, fg_mask: torch.Tensor,
         intrinsics: torch.Tensor, img_res: int,
-        rot_angle: float, rot_axis: torch.Tensor, translation: torch.Tensor):
+        rot_angle: float, rot_axis: torch.Tensor, translation: torch.Tensor,
+        depth_minmax: Tuple[float, float] = None):
 
     device = fg_mask.device
     
@@ -49,12 +50,13 @@ def transform_depth(
         reshaped_bg_pts = np.vstack((reshaped_bg_pts, pt))
         idx_to_coord[len(reshaped_bg_pts) - 1] = divmod(idx, img_res)
 
-    (rendered_depth, occluded_pixels, target_mask, transformed_positions_x, transformed_positions_y, orig_visibility_mask) = points_to_depth_merged(
+    (rendered_depth, occluded_pixels, target_mask, transformed_positions_x, transformed_positions_y, orig_visibility_mask, _) = points_to_depth_merged(
         points=torch.from_numpy(reshaped_bg_pts),
         mod_ids=torch.from_numpy(new_mod_ids),
         intrinsics=intrinsics,
         output_size=(img_res, img_res),
-        max_depth_value=reshaped_bg_pts[:, 2].max()
+        max_depth_value=reshaped_bg_pts[:, 2].max(),
+        depth_minmax=depth_minmax
     )
 
     #plot_img(rendered_depth)
@@ -317,7 +319,7 @@ def poisson_solve(input_image, mask):
 
 def points_to_depth_merged(
         points: torch.Tensor, mod_ids: torch.Tensor, intrinsics: torch.Tensor, output_size: Tuple[int, int],
-        R=None, t=None, max_depth_value=float('inf')):
+        R=None, t=None, max_depth_value=float('inf'), depth_minmax=None):
     
     points = points.cpu().numpy()
     mod_ids = mod_ids.cpu().numpy()
@@ -396,11 +398,15 @@ def points_to_depth_merged(
     #smoothed_depth_map = cv2.medianBlur(depth_map.astype(np.float32), ksize=3)
     #depth_map[depth_map < 1e-8] = smoothed_depth_map[depth_map < 1e-8]
     #smoothed_depth_map = depth_map #cv2.medianBlur(depth_map.astype(np.float32), ksize=1)
-    max_depth = depth_map.max()
-    min_depth = depth_map.min()
+    if depth_minmax is None:
+        max_depth = depth_map.max()
+        min_depth = depth_map.min()
+    else:
+        min_depth = depth_minmax[0]
+        max_depth = depth_minmax[1]
     depth_map_normalized = 255 * ((depth_map - min_depth) / (max_depth - min_depth) )
     # depth_image = Image.fromarray(depth_map_normalized.astype(np.uint8))
 
     original_visibility_mask = original_visibility_mask.astype(bool)
 
-    return depth_map_normalized, pixels_no_points, target_mask, u[original_visibility_mask], v[original_visibility_mask], original_visibility_mask
+    return depth_map_normalized, pixels_no_points, target_mask, u[original_visibility_mask], v[original_visibility_mask], original_visibility_mask, (min_depth, max_depth)

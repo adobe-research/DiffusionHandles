@@ -5,7 +5,7 @@ import scipy.ndimage
 from diffhandles.zoe_depth_estimator import ZoeDepthEstimator
 from diffhandles.stable_null_inverter import StableNullInverter
 from diffhandles.stable_diffuser import StableDiffuser
-from diffhandles.depth_transform import transform_depth
+from diffhandles.depth_transform import transform_depth, points_to_depth_merged
 from diffhandles.utils import solve_laplacian_depth
 
 class DiffusionHandles:
@@ -76,7 +76,7 @@ class DiffusionHandles:
 
     def select_foreground(
             self, img: torch.Tensor, depth: torch.Tensor, fg_mask:torch.Tensor, bg_depth: torch.Tensor,
-            prompt: str, fg_phrase: str, bg_phrase: str):
+            prompt: str, fg_phrase: str, bg_phrase: str, testing: bool = False):
         """
         Select the foreground object in the image. The following steps are performed:
         1) The background depth is updated by infilling the hole in the depth of the input image
@@ -114,21 +114,36 @@ class DiffusionHandles:
         bg_pts = ZoeDepthEstimator.depth_to_points(bg_depth)
         pts = ZoeDepthEstimator.depth_to_points(depth)
 
-        # Need to 3d-transform the depth with an identity transform
-        # to get the same depth format as in the guided inference pass
-        # where transformed depth is used.
-        # (The depth is actually converted to disparity, which the stable diffuser expects as input.)
-        # TODO: can we directly call `points_to_depth_merged` here to transform `self.pts` directly to disparity
-        # and avoid all the overhead of transforming the point cloud? This would also allow us to do this only once
-        # when loading the image instead of each time the foreground is transformed.
-        depth, target_mask, correspondences = transform_depth(
-            pts=pts, bg_pts=bg_pts, fg_mask=fg_mask,
-            intrinsics=self.diffuser_class.get_depth_intrinsics(h=self.img_res, w=self.img_res),
-            img_res=self.img_res,
-            rot_angle=0.0,
-            rot_axis=torch.tensor([0.0, 1.0, 0.0]),
-            translation=torch.tensor([0.0, 0.0, 0.0]),
+        if testing:
+            # Testing depth for inversion that does not require foreground selection
+            # (so that inversion can be done only once when loading the input image).
+            # Gives only slightly different results. Leaving it out for now as it is less well tested.
+            (depth, occluded_pixels, target_mask, transformed_positions_x, transformed_positions_y, orig_visibility_mask, depth_minmax) = points_to_depth_merged(
+                points=pts.view(-1, 3),
+                mod_ids=torch.zeros(size=(pts.view(-1, 3).shape[0],), device=pts.device, dtype=torch.uint8),
+                intrinsics=self.diffuser_class.get_depth_intrinsics(h=self.img_res, w=self.img_res),
+                output_size=(self.img_res, self.img_res),
+                max_depth_value=pts.view(-1, 3)[:, 2].max(),
+                depth_minmax=None
             )
+            depth = torch.from_numpy(depth).unsqueeze(dim=0).unsqueeze(dim=0).to(device=img.device, dtype=torch.float32)
+        else:
+            # Need to 3d-transform the depth with an identity transform
+            # to get the same depth format as in the guided inference pass
+            # where transformed depth is used.
+            # (The depth is actually converted to disparity, which the stable diffuser expects as input.)
+            # TODO: can we directly call `points_to_depth_merged` here to transform `self.pts` directly to disparity
+            # and avoid all the overhead of transforming the point cloud? This would also allow us to do this only once
+            # when loading the image instead of each time the foreground is transformed.
+            depth, target_mask, correspondences = transform_depth(
+                pts=pts, bg_pts=bg_pts, fg_mask=fg_mask,
+                intrinsics=self.diffuser_class.get_depth_intrinsics(h=self.img_res, w=self.img_res),
+                img_res=self.img_res,
+                rot_angle=0.0,
+                rot_axis=torch.tensor([0.0, 1.0, 0.0]),
+                translation=torch.tensor([0.0, 0.0, 0.0]),
+                )
+            depth_minmax = None
 
         # invert image to get noise and null text that can be used to reproduce the image
         diffuser = self.diffuser_class(custom_unet=False)
@@ -149,14 +164,15 @@ class DiffusionHandles:
                 latents=inverted_noise, depth=depth, uncond_embeddings=inverted_null_text,
                 prompt=prompt, phrases=[fg_phrase, bg_phrase])
 
-        return inverted_noise, inverted_null_text, bg_depth, attentions, activations, activations2, activations3
+        return inverted_noise, inverted_null_text, bg_depth, attentions, activations, activations2, activations3, depth_minmax
     
     def transform_foreground(
             self, depth: torch.Tensor, fg_mask:torch.Tensor, bg_depth: torch.Tensor,
             prompt: str, fg_phrase: str, bg_phrase: str,
             inverted_null_text: torch.Tensor, inverted_noise: torch.Tensor, 
             attentions: torch.Tensor, activations: torch.Tensor, activations2: torch.Tensor, activations3: torch.Tensor,
-            rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
+            rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
+            testing=False, depth_minmax=None):
         """
         Move the foreground object. The following steps are performed:
         1) The depth of the foreground object and the intermediate features are 3D-transformed
@@ -187,6 +203,7 @@ class DiffusionHandles:
         bg_pts = ZoeDepthEstimator.depth_to_points(bg_depth)
         pts = ZoeDepthEstimator.depth_to_points(depth)
 
+        
         # 3d-transform depth
         transformed_depth, target_mask, correspondences = transform_depth(
             pts=pts, bg_pts=bg_pts, fg_mask=fg_mask,
@@ -194,7 +211,8 @@ class DiffusionHandles:
             img_res=self.img_res,
             rot_angle=rot_angle,
             rot_axis=rot_axis,
-            translation=translation)
+            translation=translation,
+            depth_minmax=depth_minmax)
 
         if transformed_depth.shape[-2:] != (self.img_res, self.img_res):
             raise ValueError(f"Transformed depth must be of size {self.img_res}x{self.img_res}.")

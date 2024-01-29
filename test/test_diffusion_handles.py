@@ -21,6 +21,7 @@ def test_diffusion_handles():
     prompt = "a sunflower in the garden"
     fg_phrase = "sunflower"
     bg_phrase = "garden"
+    testing = False
 
     diff_handles = DiffusionHandles()
     diff_handles.to(device)
@@ -61,9 +62,12 @@ def test_diffusion_handles():
     del depth_estimator
 
     # select the foreground object
-    inverted_noise, inverted_null_text, bg_depth, attentions, activations, activations2, activations3 = diff_handles.select_foreground(
+    inverted_noise, inverted_null_text, bg_depth, attentions, activations, activations2, activations3, depth_minmax = diff_handles.select_foreground(
         img=img, depth=depth, fg_mask=fg_mask, bg_depth=bg_depth,
-        prompt=prompt, fg_phrase=fg_phrase, bg_phrase=bg_phrase)
+        prompt=prompt, fg_phrase=fg_phrase, bg_phrase=bg_phrase, testing=testing)
+
+    if not testing:
+        depth_minmax = None
 
     for rot_angle in rot_angles:
 
@@ -73,7 +77,7 @@ def test_diffusion_handles():
             prompt=prompt, fg_phrase=fg_phrase, bg_phrase=bg_phrase,
             inverted_null_text=inverted_null_text, inverted_noise=inverted_noise, 
             attentions=attentions, activations=activations, activations2=activations2, activations3=activations3,
-            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation)
+            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation, depth_minmax=depth_minmax)
 
         # save the edited image
         edited_img_path = f'{edited_img_path_template}_rotated_{rot_angle:.0f}.png'
