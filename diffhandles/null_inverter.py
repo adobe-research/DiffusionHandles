@@ -1,10 +1,10 @@
 import torch
 
-from diffhandles.diffuser import Diffuser
+from diffhandles.guided_diffuser import GuidedDiffuser
 
 class NullInverter:
 
-    def __init__(self, model: Diffuser):
+    def __init__(self, model: GuidedDiffuser):
         self.model = model
         
     def to(self, device: torch.device):

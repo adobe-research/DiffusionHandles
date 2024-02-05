@@ -10,19 +10,20 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.configuration_utils import FrozenDict
 from diffusers.utils import deprecate
+from diffusers import StableDiffusionDepth2ImgPipeline
 from tqdm import tqdm
 
 from diffhandles.model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel
-from diffhandles.diffuser import Diffuser
-from diffhandles.utils import normalize_depth, normalize_attn_torch, unpack_correspondences
+from diffhandles.guided_diffuser import GuidedDiffuser
+from diffhandles.utils import normalize_attn_torch, unpack_correspondences
 from diffhandles.losses import compute_localized_transformed_appearance_loss, compute_background_loss
 
-class StableDiffuser(Diffuser):
-    def __init__(self, custom_unet=False):
-        super().__init__()
+class GuidedStableDiffuser(GuidedDiffuser):
+    def __init__(self, custom_unet, conf):
+        super().__init__(conf=conf)
 
         model_name = "stabilityai/stable-diffusion-2-depth"
-        
+
         self.scheduler = DDIMScheduler(
             beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
         if custom_unet:
@@ -115,7 +116,11 @@ class StableDiffuser(Diffuser):
         )
         
         # normalize depth to [0, 1]
-        return normalize_depth(depth)
+        depth_min = torch.amin(depth, dim=[1, 2, 3], keepdim=True)
+        depth_max = torch.amax(depth, dim=[1, 2, 3], keepdim=True)
+        depth = 2.0 * (depth - depth_min) / (depth_max - depth_min) - 1.0
+
+        return depth
 
     @staticmethod
     def get_depth_intrinsics(h: int, w: int):
@@ -137,18 +142,18 @@ class StableDiffuser(Diffuser):
             [0, 0, 1]
             ])
 
-    def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str]):
+    def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str): #, phrases: List[str]):
 
         depth = self.init_depth(depth)
         # depth = normalize_depth(depth)
         
-        # Get Object Positions
-        object_positions = phrase_to_index(prompt, phrases)
+        # # Get Object Positions
+        # object_positions = phrase_to_index(prompt, phrases)
 
-        # Encode Classifier Embeddings
-        uncond_input = self.tokenizer(
-            [""], padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
-        )
+        # # Encode Classifier Embeddings
+        # uncond_input = self.tokenizer(
+        #     [""], padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
+        # )
         
         #uncond_embeddings = text_encoder(uncond_input.input_ids.to(device))[0]
 
@@ -179,17 +184,15 @@ class StableDiffuser(Diffuser):
 
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
-        attention_list = []
+        # attention_list = []
         activation_list = [] 
         activation2_list = []
         activation3_list = []
         
-        obj_number = 2
+        # obj_number = 2
         depth_iter = True
         timestep_num = 0
         for index, t in enumerate(tqdm(timesteps)):
-            if(timestep_num > 51):
-                depth_iter = False
             with torch.no_grad():
                 #print(index)
                 #latent_timestep = timesteps[index:index+1]
@@ -209,9 +212,9 @@ class StableDiffuser(Diffuser):
                 )
                 
                 noise_pred = unet_output[0]
-                attn_map_integrated_up = unet_output[1]
-                attn_map_integrated_mid = unet_output[2]
-                attn_map_integrated_down = unet_output[3]
+                # attn_map_integrated_up = unet_output[1]
+                # attn_map_integrated_mid = unet_output[2]
+                # attn_map_integrated_down = unet_output[3]
                 activations = unet_output[4]
                 activations2 = unet_output[5]
                 activations3 = unet_output[6]
@@ -219,17 +222,16 @@ class StableDiffuser(Diffuser):
                 activation_list.append(activations[0])
                 activation2_list.append(activations2[0])
                 activation3_list.append(activations3[0])
-                attention_obj_list = []
+                # attention_obj_list = []
                             
-                for m in range(obj_number):
-                    attentions = retrieve_attention_maps(attn_map_integrated_down, attn_map_integrated_mid, attn_map_integrated_up, m, object_positions, latents.shape[2])
-                    attention_obj_list.append(attentions)
-                attention_list.append(attention_obj_list)
+                # for m in range(obj_number):
+                #     attentions = retrieve_attention_maps(attn_map_integrated_down, attn_map_integrated_mid, attn_map_integrated_up, m, object_positions, latents.shape[2])
+                #     attention_obj_list.append(attentions)
+                # attention_list.append(attention_obj_list)
 
                 latent_model_input = torch.cat([latents]*2) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                if(depth_iter):
-                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
+                latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
 
 
                 text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
@@ -262,11 +264,11 @@ class StableDiffuser(Diffuser):
         # return attention_list, activation_list, activation2_list, activation3_list, image
         # # TEMP! (comment back in below)
         
-        return attention_list, activation_list, activation2_list, activation3_list
+        return activation_list, activation2_list, activation3_list, latents
 
     def guided_inference(
-            self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str, phrases: List[str],
-            attention_maps_orig: torch.Tensor, activations_orig: torch.Tensor, activations2_orig: torch.Tensor, activations3_orig: torch.Tensor,
+            self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
+            activations_orig: torch.Tensor, activations2_orig: torch.Tensor, activations3_orig: torch.Tensor,
             correspondences: torch.Tensor):
 
         processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
@@ -274,16 +276,16 @@ class StableDiffuser(Diffuser):
         # depth = normalize_depth(depth)
         depth = self.init_depth(depth)
         
-        # Get Object Positions
-        object_positions = phrase_to_index(prompt, phrases)
+        # # Get Object Positions
+        # object_positions = phrase_to_index(prompt, phrases)
 
-        negative_prompt = "bad, deformed, ugly, bad anotomy"
+        # negative_prompt = "bad, deformed, ugly, bad anotomy"
         
-        # Encode Classifier Embeddings
-        uncond_input = self.tokenizer(
-            [""] * 1, padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
-        )
-        #uncond_embeddings = text_encoder(uncond_input.input_ids.to(device))[0]
+        # # Encode Classifier Embeddings
+        # uncond_input = self.tokenizer(
+        #     [""] * 1, padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
+        # )
+        # #uncond_embeddings = text_encoder(uncond_input.input_ids.to(device))[0]
 
         # Encode Prompt
         input_ids = self.tokenizer(
@@ -313,11 +315,13 @@ class StableDiffuser(Diffuser):
         
         for index, t in enumerate(tqdm(timesteps)):
             iteration = 0
-            attention_map_orig = attention_maps_orig[timestep_num]
+            # attention_map_orig = attention_maps_orig[timestep_num]
             activation_orig = activations_orig[timestep_num]
             activation2_orig = activations2_orig[timestep_num]
             activation3_orig = activations3_orig[timestep_num]
             torch.set_grad_enabled(True)
+
+            activations_size = (activation3_orig.shape[-2], activation3_orig.shape[-1])
                         
             while iteration < 3 and (index < 38 and index >= 0):
                 
@@ -337,9 +341,9 @@ class StableDiffuser(Diffuser):
                 )
                     
                 noise_pred = unet_output[0]
-                attn_map_integrated_up = unet_output[1]
-                attn_map_integrated_mid = unet_output[2]
-                attn_map_integrated_down = unet_output[3]
+                # attn_map_integrated_up = unet_output[1]
+                # attn_map_integrated_mid = unet_output[2]
+                # attn_map_integrated_down = unet_output[3]
                 activations = unet_output[4]
                 activations2 = unet_output[5]
                 activations3 = unet_output[6]
@@ -347,62 +351,54 @@ class StableDiffuser(Diffuser):
                 loss = 0
                 
                 for m in range(obj_number):
-                    attention_maps = retrieve_attention_maps(attn_map_integrated_down, attn_map_integrated_mid, attn_map_integrated_up, m, object_positions, latents.shape[2])
-                    attention_map_obj_orig = attention_map_orig[m]                
+                    # attention_maps = retrieve_attention_maps(attn_map_integrated_down, attn_map_integrated_mid, attn_map_integrated_up, m, object_positions, latents.shape[2])
+                    # attention_map_obj_orig = attention_map_orig[m]                
                     if(m == 0):
                         if(timestep_num >= 0):
                             appearance_loss = 0.0
                             bg_loss = 0.0
                             if(timestep_num % 3 == 0):
                                 appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
-                                    attn_maps=attention_maps, activations=activations3[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    activations=activations3[0], activations_orig=activation3_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7, patch_size=1)
+                                    attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
                                 bg_loss += 1.5 * compute_background_loss(
-                                    attn_maps=attention_maps, activations=activations3[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    activations=activations3[0],
+                                    activations_orig=activation3_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7)
+                                    attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
 
                             if(timestep_num % 3 == 1):
                                 appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
-                                    attn_maps=attention_maps, activations=activations2[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    activations=activations2[0], activations_orig=activation2_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6, patch_size=1)
+                                    attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
                                 bg_loss += 1.5 * compute_background_loss(
-                                    attn_maps=attention_maps, activations=activations2[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    activations=activations2[0], activations_orig=activation2_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6)
+                                    attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
 
                             if(timestep_num % 3 == 2):
                                 appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
-                                    attn_maps=attention_maps, activations=activations2[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    activations=activations2[0], activations_orig=activation2_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6, patch_size=1)
+                                    attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
                                 appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
-                                    attn_maps=attention_maps, activations=activations3[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    activations=activations3[0], activations_orig=activation3_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7, patch_size=1)
+                                    attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
                                 bg_loss += 1.5 * compute_background_loss(
-                                    attn_maps=attention_maps, activations=activations3[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
+                                    activations=activations3[0], activations_orig=activation3_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7)
+                                    attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
                                 bg_loss += 1.5 * compute_background_loss(
-                                    attn_maps=attention_maps, activations=activations2[0],
-                                    attn_maps_orig=attention_map_obj_orig, activations_orig=activation2_orig,
+                                    activations=activations2[0], activations_orig=activation2_orig,
                                     processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6)
+                                    attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
                         else:
                             appearance_loss = 0.1 * compute_localized_transformed_appearance_loss(
-                                attn_maps=attention_maps, activations=activations3[0],
-                                attn_maps_orig=attention_map_obj_orig, activations_orig=activation3_orig,
-                                attn_layer_low=6, attn_layer_high=7, patch_size=1)
+                                activations=activations3[0], activations_orig=activation3_orig,
+                                attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
 
                         if(iteration == 0):
                             app_wt = 2.5
@@ -423,9 +419,9 @@ class StableDiffuser(Diffuser):
                         # print('appearance loss')
                         # print(appearance_loss)
 
-                        loss += 1.5*app_wt*appearance_loss + 1.25*bg_wt*bg_loss 
+                        loss += self.conf.fg_weight*app_wt*appearance_loss + self.conf.bg_weight*bg_wt*bg_loss
 
-                loss *= 30        
+                loss *= 30
 
                 if(loss == 0):
                     grad_cond = 0

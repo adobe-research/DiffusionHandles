@@ -5,12 +5,11 @@ import torch
 from tqdm import tqdm
 
 from diffhandles.null_inverter import NullInverter
-from diffhandles.stable_diffuser import StableDiffuser
-from diffhandles.utils import normalize_depth
+from diffhandles.guided_stable_diffuser import GuidedStableDiffuser
 
 class StableNullInverter(NullInverter):
 
-    def __init__(self, model: StableDiffuser, num_ddim_steps: int = 50, guidance_scale: float = 7.5):
+    def __init__(self, model: GuidedStableDiffuser, num_ddim_steps: int = 50, guidance_scale: float = 7.5):
 
         super().__init__(model=model)
         
@@ -70,7 +69,7 @@ class StableNullInverter(NullInverter):
         return latents
 
     @torch.no_grad()
-    def latent2image(self, latents, return_type='np'):
+    def latent2image(self, latents):
         # undo scaling by magic number
         latents = 1 / 0.18215 * latents.detach()
         

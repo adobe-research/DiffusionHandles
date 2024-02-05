@@ -7,11 +7,26 @@ import scipy.sparse
 
 from diffhandles.utils import pack_correspondences
 
+def normalize_depth(depth, bounds=None, return_bounds=False):
+    if depth.dim() != 4:
+        raise RuntimeError(f'Expected depth to have 4 dimensions, got {depth.dim()}')
+    
+    if bounds is None:
+        max_depth = depth.view(depth.shape[0], -1).max(dim=-1).values[..., None, None, None]
+        min_depth = depth.view(depth.shape[0], -1).min(dim=-1).values[..., None, None, None]
+    else:
+        min_depth, max_depth = bounds
+    
+    if return_bounds:
+        return 255 * (depth - min_depth) / (max_depth - min_depth), (min_depth, max_depth)
+    else:
+        return 255 * (depth - min_depth) / (max_depth - min_depth)
+
 def transform_depth(
         pts: torch.Tensor, bg_pts: torch.Tensor, fg_mask: torch.Tensor,
         intrinsics: torch.Tensor, img_res: int,
         rot_angle: float, rot_axis: torch.Tensor, translation: torch.Tensor,
-        depth_minmax: Tuple[float, float] = None):
+        depth_bounds: Tuple[float, float] = None):
 
     device = fg_mask.device
     
@@ -50,14 +65,20 @@ def transform_depth(
         reshaped_bg_pts = np.vstack((reshaped_bg_pts, pt))
         idx_to_coord[len(reshaped_bg_pts) - 1] = divmod(idx, img_res)
 
-    (rendered_depth, occluded_pixels, target_mask, transformed_positions_x, transformed_positions_y, orig_visibility_mask, _) = points_to_depth_merged(
-        points=torch.from_numpy(reshaped_bg_pts),
-        mod_ids=torch.from_numpy(new_mod_ids),
+    (rendered_depth, target_mask, transformed_positions_x, transformed_positions_y, orig_visibility_mask) = points_to_depth(
+        points=torch.from_numpy(reshaped_bg_pts).to(device=device),
         intrinsics=intrinsics,
         output_size=(img_res, img_res),
-        max_depth_value=reshaped_bg_pts[:, 2].max(),
-        depth_minmax=depth_minmax
+        point_mask=torch.from_numpy(new_mod_ids).to(device=device),
     )
+
+    # without conversion to disparty
+    direct_depth = rendered_depth
+
+    # get normalized disparity
+    rendered_depth = normalize_depth(1.0/rendered_depth, bounds=depth_bounds)
+    
+    rendered_depth = rendered_depth[0, 0, ...].cpu().numpy()
 
     #plot_img(rendered_depth)
 
@@ -187,7 +208,7 @@ def transform_depth(
     lap_inpainted_depth_map = torch.from_numpy(lap_inpainted_depth_map).to(device=device, dtype=torch.float32)[None, None]
     target_mask_cleaned = torch.from_numpy(target_mask_cleaned.astype(np.float32) / 255.0).to(device=device)[None, None]
 
-    return lap_inpainted_depth_map, target_mask_cleaned, correspondences
+    return lap_inpainted_depth_map, target_mask_cleaned, correspondences, direct_depth
 
 def transform_point_cloud(points, axis, angle_degrees, x, y, z, mask):
     """
@@ -317,30 +338,88 @@ def poisson_solve(input_image, mask):
 
     return output_image
 
-def points_to_depth_merged(
-        points: torch.Tensor, mod_ids: torch.Tensor, intrinsics: torch.Tensor, output_size: Tuple[int, int],
-        R=None, t=None, max_depth_value=float('inf'), depth_minmax=None):
+def depth_to_points(depth: torch.Tensor, intrinsics: torch.Tensor, extrinsics_R: torch.Tensor = None, extrinsics_t: torch.Tensor = None):
+
+    device = depth.device
+    
+    if depth.shape[0] != 1:
+        raise ValueError("Only batch size 1 is supported")
+
+    depth = depth.squeeze(dim=0).cpu().numpy()
+    intrinsics = intrinsics.numpy()
+    intrinsics_inv = np.linalg.inv(intrinsics)
+    if extrinsics_R is None:
+        extrinsics_R = np.eye(3)
+    else:
+        extrinsics_R = extrinsics_R.cpu().numpy()
+    if extrinsics_t is None:
+        extrinsics_t = np.zeros(3)
+    else:
+        extrinsics_t = extrinsics_t.cpu().numpy()
+
+    # M converts from your coordinate to PyTorch3D's coordinate system
+    M = np.eye(3)
+    M[0, 0] = -1.0
+    M[1, 1] = -1.0
+
+    height, width = depth.shape[1:3]
+
+    # print(height)
+    # print(width)
+
+    x = np.arange(width)
+    y = np.arange(height)
+    coord = np.stack(np.meshgrid(x, y), -1)
+    coord = np.concatenate((coord, np.ones_like(coord)[:, :, [0]]), -1)  # z=1
+    coord = coord.astype(np.float32)
+    # coord = torch.as_tensor(coord, dtype=torch.float32, device=device)
+    coord = coord[None]  # bs, h, w, 3
+
+    D = depth[:, :, :, None, None]
+    # print(D.shape, Kinv[None, None, None, ...].shape, coord[:, :, :, :, None].shape )
+    points = D * intrinsics_inv[None, None, None, ...] @ coord[:, :, :, :, None]
+    # pts3D_1 live in your coordinate system. Convert them to Py3D's
+    points = M[None, None, None, ...] @ points
+    # camera to world coordinates
+    points = extrinsics_R[None, None, None, ...] @ points + extrinsics_t[None, None, None, :, None]
+
+    return torch.from_numpy(points[:, :, :, :3, 0][0]).to(device=device)
+
+def points_to_depth(points: torch.Tensor, intrinsics: torch.Tensor, output_size: Tuple[int, int], extrinsics_R: torch.Tensor = None, extrinsics_t: torch.Tensor = None, point_mask: torch.Tensor = None):
+    """
+    input points are expected to be in camera coordinate frame
+    """
+    
+    device = points.device
     
     points = points.cpu().numpy()
-    mod_ids = mod_ids.cpu().numpy()
-    
-    K = intrinsics.cpu().numpy()
-    if R is None:
-        R = np.eye(3)
-    if t is None:
-        t = np.zeros(3)
+    intrinsics = intrinsics.cpu().numpy()
+    if extrinsics_R is None:
+        extrinsics_R = np.eye(3)
+    else:
+        extrinsics_R = extrinsics_R.cpu().numpy()
+    if extrinsics_t is None:
+        extrinsics_t = np.zeros(3)
+    else:
+        extrinsics_t = extrinsics_t.cpu().numpy()
+    if point_mask is None:
+        point_mask = np.zeros(len(points), dtype = np.uint8)
+    else:
+        point_mask = point_mask.cpu().numpy()
 
-    # Coordinate transformations
+    # to camera coordinates
     points = points[..., np.newaxis]
-    points = np.linalg.inv(R) @ (points.T - t[:, None]).T
+    points = np.linalg.inv(extrinsics_R) @ (points.T - extrinsics_t[:, None]).T
     points = points[:, :, 0]
+
+    # M_inv converts to your coordinate from PyTorch3D's coordinate system
     M_inv = np.eye(3)
     M_inv[0, 0] = -1.0
     M_inv[1, 1] = -1.0
     points = (M_inv @ points.T).T
 
     # Projection to Image Plane
-    projected = (K @ points.T).T
+    projected = (intrinsics @ points.T).T
     u = projected[:, 0] / projected[:, 2]
     v = projected[:, 1] / projected[:, 2]
 
@@ -348,49 +427,52 @@ def points_to_depth_merged(
     v = np.around(np.clip(v, 0, output_size[0] - 1)).astype(int)
 
     depth_map = np.full(output_size, np.inf)
-    dist_to_cam = np.full(output_size, np.inf)
-    target_mask = np.full(output_size, False)
+    # dist_to_cam = np.full(output_size, np.inf)
+    depth_mask = np.full(output_size, False)
     modified_depth_mask = np.full(output_size, False)
-    original_visibility_mask = np.full_like(mod_ids, False)
+    masked_point_visible_mask = np.full_like(point_mask, False)
     depth_set_by = np.full(output_size, -1, dtype=np.int64)
 
-
+    # depth buffer
     for i in range(points.shape[0]):
         if points[i, 2] < depth_map[v[i], u[i]]:
             depth_map[v[i], u[i]] = points[i, 2]
-            dist_to_cam[v[i], u[i]] = (points[i,0] ** 2 + points[i, 1]**2 + points[i, 2]**2)**0.5
-            if mod_ids[i]:
-                original_visibility_mask[i] = True
+            # dist_to_cam[v[i], u[i]] = (points[i,0] ** 2 + points[i, 1]**2 + points[i, 2]**2)**0.5
+            if point_mask[i]:
+                masked_point_visible_mask[i] = True
                 if depth_set_by[v[i], u[i]] >= 0:
-                    original_visibility_mask[depth_set_by[v[i], u[i]]] = False
-                target_mask[v[i], u[i]] = True
+                    masked_point_visible_mask[depth_set_by[v[i], u[i]]] = False
+                depth_mask[v[i], u[i]] = True
                 modified_depth_mask[v[i], u[i]] = True
                 depth_set_by[v[i], u[i]] = i
             elif modified_depth_mask[v[i], u[i]]:
-                target_mask[v[i], u[i]] = False
+                depth_mask[v[i], u[i]] = False
                 if depth_set_by[v[i], u[i]] >= 0:
-                    original_visibility_mask[depth_set_by[v[i], u[i]]] = False
+                    masked_point_visible_mask[depth_set_by[v[i], u[i]]] = False
                 depth_set_by[v[i], u[i]] = i
 
+    masked_point_visible_mask = masked_point_visible_mask.astype(bool)
 
-    mask_no_points = depth_map == max_depth_value
-    pixels_no_points = np.column_stack(np.where(mask_no_points))
+    # mask_no_points = depth_map == max_depth_value
+    # pixels_no_points = np.column_stack(np.where(mask_no_points))
 
-    far_inv_depth = 0.03 # inverse depth at far plane (empiricaly ~ similar to MiDaS depth ranges)
-    near_inv_depth = 100.0 # inverse depth at near plane (empiricaly ~ similar to MiDaS depth ranges)
+    # far_inv_depth = 0.03 # inverse depth at far plane (empiricaly ~ similar to MiDaS depth ranges)
+    # near_inv_depth = 100.0 # inverse depth at near plane (empiricaly ~ similar to MiDaS depth ranges)
 
-    #smoothed_dist_to_cam = cv2.medianBlur(dist_to_cam.astype(np.float32), ksize=3)
-    #dist_to_cam[dist_to_cam == np.inf] = smoothed_dist_to_cam[dist_to_cam == np.inf]
+    # #smoothed_dist_to_cam = cv2.medianBlur(dist_to_cam.astype(np.float32), ksize=3)
+    # #dist_to_cam[dist_to_cam == np.inf] = smoothed_dist_to_cam[dist_to_cam == np.inf]
 
-    near_depth = dist_to_cam.min()
-    far_depth = dist_to_cam.max()
+    # near_depth = dist_to_cam.min()
+    # far_depth = dist_to_cam.max()
 
-    dist_to_cam = 1.0 / dist_to_cam
-    dist_to_cam = (dist_to_cam - 1/far_depth) / ((1/near_depth) - (1/far_depth))
-    dist_to_cam = dist_to_cam * (near_inv_depth - far_inv_depth) + far_inv_depth
+    # dist_to_cam = 1.0 / dist_to_cam
+    # dist_to_cam = (dist_to_cam - 1/far_depth) / ((1/near_depth) - (1/far_depth))
+    # dist_to_cam = dist_to_cam * (near_inv_depth - far_inv_depth) + far_inv_depth
 
-    #dist_to_cam = cv2.medianBlur(dist_to_cam.astype(np.float32), ksize = 1)
-    depth_map = 1.0 / depth_map
+    # #dist_to_cam = cv2.medianBlur(dist_to_cam.astype(np.float32), ksize = 1)
+    
+    # # depth to disparity
+    # depth_map = 1.0 / depth_map
 
     #depth_map[depth_map == np.inf] = 1e-8
     #depth_map[depth_map == 0] = 1e-8
@@ -398,15 +480,8 @@ def points_to_depth_merged(
     #smoothed_depth_map = cv2.medianBlur(depth_map.astype(np.float32), ksize=3)
     #depth_map[depth_map < 1e-8] = smoothed_depth_map[depth_map < 1e-8]
     #smoothed_depth_map = depth_map #cv2.medianBlur(depth_map.astype(np.float32), ksize=1)
-    if depth_minmax is None:
-        max_depth = depth_map.max()
-        min_depth = depth_map.min()
-    else:
-        min_depth = depth_minmax[0]
-        max_depth = depth_minmax[1]
-    depth_map_normalized = 255 * ((depth_map - min_depth) / (max_depth - min_depth) )
     # depth_image = Image.fromarray(depth_map_normalized.astype(np.uint8))
 
-    original_visibility_mask = original_visibility_mask.astype(bool)
+    depth_map = torch.from_numpy(depth_map)[None, None, ...].to(device=device, dtype=torch.float32)
 
-    return depth_map_normalized, pixels_no_points, target_mask, u[original_visibility_mask], v[original_visibility_mask], original_visibility_mask, (min_depth, max_depth)
+    return depth_map, depth_mask, u[masked_point_visible_mask], v[masked_point_visible_mask], masked_point_visible_mask

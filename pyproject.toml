@@ -18,6 +18,7 @@ authors = [
     ]
 
 [tool.poetry.dependencies]
+pip = "*"
 python = ">=3.9, <3.11"
 torch = ">=2.0"
 torchvision = "*"
@@ -27,6 +28,9 @@ timm = "0.6.12" # required by ZoeDepth (the pretrained weights are for this vers
 diffusers = ">=0.23"
 transformers = ">=4.33"
 accelerate = "*"
-zoedepth = { git = "https://github.com/paulguerrero/ZoeDepth.git" }
-saicinpainting = { git = "https://github.com/paulguerrero/lama.git" }
-lang-sam = { git = "https://github.com/paulguerrero/lang-sam" }
+zoedepth = { git = "https://github.com/paulguerrero/ZoeDepth.git", optional = true }
+saicinpainting = { git = "https://github.com/paulguerrero/lama.git", optional = true }
+lang-sam = { git = "https://github.com/paulguerrero/lang-sam", optional = true }
+
+[tool.poetry.extras]
+dev = ["zoedepth", "saicinpainting", "lang-sam"]

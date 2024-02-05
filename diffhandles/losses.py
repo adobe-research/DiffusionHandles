@@ -2,19 +2,17 @@ import torch
 import cv2
 
 def compute_localized_transformed_appearance_loss(
-        attn_maps, activations, attn_maps_orig, activations_orig, processed_correspondences,
-        attn_layer_low, attn_layer_high, patch_size):
+        activations, activations_orig, processed_correspondences,
+        attn_layer_low, attn_layer_high, patch_size, activations_size):
     
     loss = 0
     for i in range(attn_layer_low,attn_layer_high):
-        attn_map_orig = attn_maps_orig[i]
-        attn_map = attn_maps[i]
-        attn_map_orig = attn_map_orig.detach()  
-        attn_map = attn_map.detach()
+        # attn_map = attn_maps[i]
+        # attn_map = attn_map.detach()
                         
-        activations_orig_map = torch.nn.functional.interpolate(activations_orig.view(1, activations_orig.shape[0], activations_orig.shape[1], activations_orig.shape[2]), (attn_map_orig.shape[0], attn_map_orig.shape[1]), mode = 'bilinear')
-        activations_map = torch.nn.functional.interpolate(activations.view(1, activations.shape[0], activations.shape[1], activations.shape[2]), (attn_map.shape[0], attn_map.shape[1]), mode = 'bilinear')
-        pixel_loss, patch_loss, mean_loss = compute_gathered_loss_alt(attn_map_orig, attn_map, activations_orig_map[0], activations_map[0], processed_correspondences, patch_size)
+        activations_orig_map = torch.nn.functional.interpolate(activations_orig.view(1, activations_orig.shape[0], activations_orig.shape[1], activations_orig.shape[2]), activations_size, mode = 'bilinear')
+        activations_map = torch.nn.functional.interpolate(activations.view(1, activations.shape[0], activations.shape[1], activations.shape[2]), activations_size, mode = 'bilinear')
+        pixel_loss, patch_loss, mean_loss = compute_gathered_loss_alt(activations_orig_map[0], activations_map[0], processed_correspondences, patch_size)
         
         loss += 1.0*patch_loss
 
@@ -22,8 +20,8 @@ def compute_localized_transformed_appearance_loss(
     return loss
 
 def compute_background_loss(
-        attn_maps, activations, attn_maps_orig, activations_orig, processed_correspondences,
-        attn_layer_low, attn_layer_high):
+        activations, activations_orig, processed_correspondences,
+        attn_layer_low, attn_layer_high, activations_size):
     
     original_x = processed_correspondences['original_x']
     original_y = processed_correspondences['original_y']
@@ -36,17 +34,15 @@ def compute_background_loss(
 
     loss = 0
     for i in range(attn_layer_low,attn_layer_high):
-        attn_map_orig = attn_maps_orig[i]
-        attn_map = attn_maps[i]
-        # visualize_img(attn_map_orig.detach().cpu().numpy(), 'attn_orig_' + str(i))
-        # visualize_img(attn_map.detach().cpu().numpy(), 'attn_' + str(i))        
-        attn_map_orig = attn_map_orig.detach()  
-        attn_map = attn_map.detach()
+        # attn_map = attn_maps[i]
+        # # visualize_img(attn_map_orig.detach().cpu().numpy(), 'attn_orig_' + str(i))
+        # # visualize_img(attn_map.detach().cpu().numpy(), 'attn_' + str(i))        
+        # attn_map = attn_map.detach()
 
-        mask = torch.zeros_like(attn_map)
-        mask_orig = torch.zeros_like(attn_map)
-        mask_trans = torch.zeros_like(attn_map)
-        mask_full = torch.zeros_like(attn_map)        
+        mask = torch.zeros(activations_size, device=activations.device, dtype=torch.float32)
+        mask_orig = torch.zeros(activations_size, device=activations.device, dtype=torch.float32)
+        mask_trans = torch.zeros(activations_size, device=activations.device, dtype=torch.float32)
+        mask_full = torch.zeros(activations_size, device=activations.device, dtype=torch.float32)        
         #print(mask.shape)
         mask[remaining_y, remaining_x] = 1
         mask_orig[remaining_y_orig, remaining_x_orig] = 1
@@ -59,9 +55,9 @@ def compute_background_loss(
         # visualize_img(mask_trans.detach().cpu().numpy(), 'bg_mask_trans_')        
         # visualize_img(mask_full.detach().cpu().numpy(), 'bg_mask_full_')                
 
-        activations_orig_map = torch.nn.functional.interpolate(activations_orig.view(1, activations_orig.shape[0], activations_orig.shape[1], activations_orig.shape[2]), (attn_map_orig.shape[0], attn_map_orig.shape[1]), mode = 'bilinear')
+        activations_orig_map = torch.nn.functional.interpolate(activations_orig.view(1, activations_orig.shape[0], activations_orig.shape[1], activations_orig.shape[2]), activations_size, mode = 'bilinear')
         appearance_orig = torch.mul(mask, activations_orig_map[0]) / mask.sum()
-        activations_map = torch.nn.functional.interpolate(activations.view(1, activations.shape[0], activations.shape[1], activations.shape[2]), (attn_map.shape[0], attn_map.shape[1]), mode = 'bilinear')
+        activations_map = torch.nn.functional.interpolate(activations.view(1, activations.shape[0], activations.shape[1], activations.shape[2]), activations_size, mode = 'bilinear')
 
         appearance = torch.mul(mask, activations_map[0]) / mask.sum()
 
@@ -79,30 +75,27 @@ def compute_background_loss(
     return loss
 
 def compute_gathered_loss_alt(
-        attn_map, attn_map_gen, act_orig, act, processed_correspondences, patch_size=1):
+        act_orig, act, processed_correspondences, patch_size=1):
     
     original_x = processed_correspondences['original_x']
     original_y = processed_correspondences['original_y']
     transformed_x = processed_correspondences['transformed_x']
     transformed_y = processed_correspondences['transformed_y']
 
-    mask = torch.zeros_like(attn_map)
-    trans_mask = torch.zeros_like(attn_map)
+    mask = torch.zeros((act.shape[-2], act.shape[-1]), device=act.device, dtype=act.dtype)
+    trans_mask = torch.zeros((act.shape[-2], act.shape[-1]), device=act.device, dtype=act.dtype)
     mask[original_y, original_x] = 1
-    attn_map = attn_map * mask    
 
     # Initialize the transformed attention map with zeros
-    trans_attn_map = torch.zeros_like(attn_map)
-    trans_attn_map[transformed_y, transformed_x] = attn_map[original_y, original_x]
+    # trans_attn_map = torch.zeros_like(attn_map)
+    # trans_attn_map[transformed_y, transformed_x] = attn_map[original_y, original_x]
 
-    attn_map = blur_attn_map(attn_map)
-    trans_attn_map = blur_attn_map(trans_attn_map)
-
-    attn_map = mask 
+    # attn_map = blur_attn_map(attn_map)
+    # trans_attn_map = blur_attn_map(trans_attn_map)
 
     trans_mask[transformed_y, transformed_x] = mask[original_y, original_x]
 
-    trans_attn_map = trans_mask
+    # trans_mask = trans_mask
     
     
     # visualize_img(attn_map.detach().cpu().numpy(), 'tricky_attn')
@@ -111,8 +104,8 @@ def compute_gathered_loss_alt(
     #attn_map = blur_attn_map(attn_map)
 
     # Weight the activations
-    weighted_act_orig = torch.mul(attn_map, act_orig) / torch.sum(attn_map)
-    weighted_act = torch.mul(trans_attn_map, act) / torch.sum(trans_attn_map)
+    weighted_act_orig = torch.mul(mask, act_orig) / torch.sum(mask)
+    weighted_act = torch.mul(trans_mask, act) / torch.sum(trans_mask)
 
     
     # Compute spatially weighted mean difference
@@ -127,8 +120,8 @@ def compute_gathered_loss_alt(
     # Create average pooling layer
     pooling = torch.nn.AvgPool2d(kernel_size, stride=1, padding=padding)
     
-    weighted_act_orig = attn_map * act_orig
-    weighted_act = trans_attn_map * act    
+    weighted_act_orig = mask * act_orig
+    weighted_act = trans_mask * act    
 
 
     # Apply average pooling and multiply by kernel size to get the sum
@@ -136,8 +129,8 @@ def compute_gathered_loss_alt(
     weighted_sums_orig = pooling(weighted_act_orig.unsqueeze(0)) * (kernel_size * kernel_size)
 
     # Apply average pooling and multiply by kernel size to get the sum for attention maps
-    weight_sums = pooling(trans_attn_map.unsqueeze(0).unsqueeze(0)) * (kernel_size * kernel_size)
-    weight_sums_orig = pooling(attn_map.unsqueeze(0).unsqueeze(0)) * (kernel_size * kernel_size)
+    weight_sums = pooling(trans_mask.unsqueeze(0).unsqueeze(0)) * (kernel_size * kernel_size)
+    weight_sums_orig = pooling(mask.unsqueeze(0).unsqueeze(0)) * (kernel_size * kernel_size)
     
     # Avoid zero division using a small constant
     EPS = 1e-10
@@ -159,8 +152,8 @@ def compute_gathered_loss_alt(
     per_patch_diff = 1*per_patch_diff.mean()
 
     
-    weighted_act_orig = torch.mul(attn_map, act_orig) / torch.sum(attn_map)
-    weighted_act = torch.mul(trans_attn_map, act) / torch.sum(trans_attn_map)
+    weighted_act_orig = torch.mul(mask, act_orig) / torch.sum(mask)
+    weighted_act = torch.mul(trans_mask, act) / torch.sum(trans_mask)
     
     # Global mean difference
     global_weighted_act_orig = torch.sum(weighted_act_orig, dim=(1,2)) #/ attn_map.sum()

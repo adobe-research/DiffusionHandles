@@ -8,7 +8,7 @@ import yaml
 import torch
 from omegaconf import OmegaConf
 
-from diffhandles.inpainter import Inpainter
+from inpainter import Inpainter
 from saicinpainting.training.trainers import load_checkpoint
 from saicinpainting.evaluation.refinement import refine_predict
 

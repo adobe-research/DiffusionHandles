@@ -18,30 +18,30 @@ def max_pool_numpy(mask, kernel_size):
 
     return pooled_mask
 
-def normalize_depth(depth_map: torch.Tensor):
-    # width, height = depth_map.size
-    # depth_map = np.asarray(depth_map)
-    # depth_map = torch.from_numpy(np.array(depth_map))
-    # depth_map = depth_map.to("cuda", torch.float32)
-    # depth_map = depth_map.view(1, depth_map.shape[0], depth_map.shape[1])
-    #print(depth_map.shape)
-    # depth_map = torch.nn.functional.interpolate(
-    #     depth_map,
-    #     size=(img_dim, img_dim),
-    #     mode="bicubic",
-    #     align_corners=False,
-    # )
+# def normalize_depth(depth_map: torch.Tensor):
+#     # width, height = depth_map.size
+#     # depth_map = np.asarray(depth_map)
+#     # depth_map = torch.from_numpy(np.array(depth_map))
+#     # depth_map = depth_map.to("cuda", torch.float32)
+#     # depth_map = depth_map.view(1, depth_map.shape[0], depth_map.shape[1])
+#     #print(depth_map.shape)
+#     # depth_map = torch.nn.functional.interpolate(
+#     #     depth_map,
+#     #     size=(img_dim, img_dim),
+#     #     mode="bicubic",
+#     #     align_corners=False,
+#     # )
 
-    # normalize to [-1, 1]
-    depth_min = torch.amin(depth_map, dim=[1, 2, 3], keepdim=True)
-    depth_max = torch.amax(depth_map, dim=[1, 2, 3], keepdim=True)
-    depth_map = 2.0 * (depth_map - depth_min) / (depth_max - depth_min) - 1.0
-    # depth_map = (depth_map - depth_min) / (depth_max - depth_min)    
-    depth_map = depth_map # .to(torch.float32)
-    # output = depth_map.cpu().numpy()[0][0]
-    #formatted = (output * 255 / np.max(output)).astype('uint8')
-    #image = Image.fromarray(formatted)
-    return depth_map
+#     # normalize to [-1, 1]
+#     depth_min = torch.amin(depth_map, dim=[1, 2, 3], keepdim=True)
+#     depth_max = torch.amax(depth_map, dim=[1, 2, 3], keepdim=True)
+#     depth_map = 2.0 * (depth_map - depth_min) / (depth_max - depth_min) - 1.0
+#     # depth_map = (depth_map - depth_min) / (depth_max - depth_min)    
+#     # depth_map = depth_map # .to(torch.float32)
+#     # output = depth_map.cpu().numpy()[0][0]
+#     #formatted = (output * 255 / np.max(output)).astype('uint8')
+#     #image = Image.fromarray(formatted)
+#     return depth_map
 
 def laplacian(image):
     laplacian_kernel = np.array([[0, 1, 0], [1, -4, 1], [0, 1, 0]])

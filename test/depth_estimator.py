@@ -14,11 +14,3 @@ class DepthEstimator:
     @staticmethod
     def get_intrinsics(self, h: int, w: int):
         raise NotImplementedError("Depth estimator must implement get_intrinsics method.")
-
-    @staticmethod
-    def depth_to_points(self, depth: torch.Tensor, R=None, t=None):
-        raise NotImplementedError("Depth estimator must implement depth_to_points method.")
-
-    @staticmethod
-    def points_to_depth_merged(self, points, mod_ids, output_size=(512, 512), R=None, t=None, max_depth_value=float('inf')):    
-        raise NotImplementedError("Depth estimator must implement depth_to_points method.")

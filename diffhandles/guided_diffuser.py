@@ -2,10 +2,10 @@ from typing import List
 
 import torch
 
-class Diffuser:
+class GuidedDiffuser:
     
-    def __init__(self):
-        pass
+    def __init__(self, conf):
+        self.conf = conf
 
     def to(self, device: torch.device = None, dtype: torch.dtype = None):
         raise NotImplementedError
