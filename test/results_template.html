@@ -1,0 +1,60 @@
+<!-- BEGIN: results_template.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Diffusion Handles Test Set Results</title>
+</head>
+<style>
+table { 
+    table-layout:fixed;
+    width:100%;
+}
+img {
+    max-height:100%;
+    max-width:100%;
+}
+thead th {
+    top: 0;
+    position: sticky;
+    z-index: 20;
+    background-color: white;
+}
+</style>
+<body>
+    <table>
+        <thead>
+            <tr>
+                <th>Input</th>
+                <th>Mask</th>
+                <th>Depth</th>
+                <th>Background</th>
+                <th>Bg. Depth</th>
+                <th>Inverted</th>
+                <th>Edit 1 Disparity</th>
+                <th>Edit 1 Raw Depth</th>
+                <th>Edit 1</th>
+                <th>Edit 2</th>
+                <th>Edit 3</th>
+            </tr>
+        </thead>
+        <tbody>
+            {% for item in items %}
+            <tr>
+                <td><img src="{{ item.input_url }}"></td>
+                <td><img src="{{ item.mask_url }}"></td>
+                <td><img src="{{ item.depth_url }}"></td>
+                <td><img src="{{ item.bg_url }}"></td>
+                <td><img src="{{ item.bg_depth_url }}"></td>
+                <td><img src="{{ item.inverted_url }}"></td>
+                <td><img src="{{ item.edit1_disp_url }}"></td>
+                <td><img src="{{ item.edit1_depth_raw_url }}"></td>
+                <td><img src="{{ item.edit1 }}"></td>
+                <td><img src="{{ item.edit2 }}"></td>
+                <td><img src="{{ item.edit3 }}"></td>
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
+<!-- END: results_template.html -->

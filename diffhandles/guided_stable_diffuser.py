@@ -10,7 +10,6 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.configuration_utils import FrozenDict
 from diffusers.utils import deprecate
-from diffusers import StableDiffusionDepth2ImgPipeline
 from tqdm import tqdm
 
 from diffhandles.model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel

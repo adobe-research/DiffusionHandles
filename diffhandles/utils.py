@@ -4,7 +4,6 @@ import torch.nn.functional as F
 import scipy.sparse
 import scipy.sparse.linalg
 import scipy.ndimage
-# import scipy.ndimage
 
 def max_pool_numpy(mask, kernel_size):
     # Convert numpy mask to tensor

@@ -1,138 +1,19 @@
+from os.path import join, exists
+from os import makedirs
+import json
+from collections import OrderedDict
+
 import torch
-import torchvision
-from PIL import Image
-import scipy
-
 from diffhandles import DiffusionHandles
-from zoe_depth_estimator import ZoeDepthEstimator
-from lama_inpainter import LamaInpainter
+
+from remove_foreground import remove_foreground
+from estimate_depth import estimate_depth
+from generate_results_webpage import generate_results_webpage
+from utils import crop_and_resize, load_image, load_depth, save_image
 
 
-def test_diffusion_handles():
+def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-
-    # # sunflower stop-motion rotation
-    # rot_angles = [30.0, 55.0, 60.0]
-    # rot_axis = torch.tensor([0.0, 1.0, 0.0])
-    # translations = [torch.tensor([0.0, 0.0, 0.0]), torch.tensor([0.0, 0.0, 0.0]), torch.tensor([0.0, 0.0, 0.0])]
-    # input_img_path = 'data/sunflower.png'
-    # prompt = "a sunflower in the garden"
-    # foreground_mask_path = None
-    # edited_img_path_template = 'results/sunflower'
-    # save_input_image = True
-    # save_input_mask = True
-    # save_depth = True
-    # save_bg_image = True
-    # save_recon_image = True
-
-    # # 1000028042_low_cropped
-    # rot_angles = [0.0]
-    # rot_axis = torch.tensor([0.0, 1.0, 0.0])
-    # translations = [torch.tensor([0.0, 0.0, 0.0])]
-    # # translations = [torch.tensor([-0.5, 0.0, 0.0])]
-    # input_img_path = '../../data/test/m4/1000028042_low_cropped.jpg'
-    # # config_path = 'config/ex4.yaml'
-    # config_path = 'config/ex4_test.yaml' # TEMP!! (comment in above)
-    # prompt = "a colorful couch with stools in an office"
-    # foreground_mask_path = '../../data/test/m4/1000028042_low_cropped_mask.png'
-    # edited_img_path_template = 'results/1000028042_low_cropped'
-    # save_input_image = True
-    # save_input_mask = True
-    # save_depth = True
-    # save_bg_image = True
-    # save_recon_image = True
-    # load_intermediate_results = False
-    # save_intermediate_results = True
-
-    # # pexels-matheus-bertelli-17109108_low
-    # rot_angles = [0.0]
-    # rot_axis = torch.tensor([0.0, 1.0, 0.0])
-    # # translations = [torch.tensor([0.0, 0.0, 0.0])]
-    # translations = [torch.tensor([0.5, 0.0, 0.0])]
-    # input_img_path = '../../data/test/m4/pexels-matheus-bertelli-17109108_low.jpg'
-    # config_path = 'config/ex2.yaml'
-    # prompt = "a spacious lobby"
-    # foreground_mask_path = '../../data/test/m4/pexels-matheus-bertelli-17109108_low_mask.png'
-    # edited_img_path_template = 'results/pexels-matheus-bertelli-17109108_low'
-    # save_input_image = True
-    # save_input_mask = True
-    # save_depth = True
-    # save_bg_image = True
-    # save_recon_image = True
-    # load_intermediate_results = False
-    # save_intermediate_results = False
-
-    # # ex2
-    # rot_angles = [0.0]
-    # rot_axis = torch.tensor([0.0, 1.0, 0.0])
-    # # translations = [torch.tensor([0.0, 0.0, 0.0])]
-    # translations = [torch.tensor([0.5, 0.0, 0.0])]
-    # input_img_path = '../../data/test/m4/ex2_input.jpg'
-    # config_path = 'config/ex2.yaml'
-    # prompt = "a spacious lobby"
-    # foreground_mask_path = '../../data/test/m4/ex2_fg_mask.png'
-    # edited_img_path_template = 'results/ex2'
-    # save_input_image = True
-    # save_input_mask = True
-    # save_depth = True
-    # save_bg_image = True
-    # save_recon_image = True
-    # load_intermediate_results = False
-    # save_intermediate_results = True
-
-    # # ex1
-    # rot_angles = [0.0]
-    # rot_axis = torch.tensor([0.0, 1.0, 0.0])
-    # # translations = [torch.tensor([0.0, 0.0, 0.0])]
-    # translations = [torch.tensor([0.0, -0.4, 0.0])]
-    # input_img_path = '../../data/test/m4/ex1_input.jpg'
-    # prompt = "tables in a restaurant"
-    # foreground_mask_path = '../../data/test/m4/ex1_fg_mask.png'
-    # config_path = 'config/ex1.yaml'
-    # edited_img_path_template = 'results/ex1'
-    # save_input_image = True
-    # save_input_mask = True
-    # save_depth = True
-    # save_bg_image = True
-    # save_recon_image = True
-    # load_intermediate_results = False
-    # save_intermediate_results = True
-
-    # # ex3
-    # rot_angles = [0.0]
-    # rot_axis = torch.tensor([0.0, 1.0, 0.0])
-    # translations = [torch.tensor([-0.3, 0.0, 0.0])]
-    # # translations = [torch.tensor([0.0, -0.4, 0.0])]
-    # input_img_path = '../../data/test/m4/ex3_input.jpg'
-    # prompt = "a corner of a room with a table and plants"
-    # foreground_mask_path = '../../data/test/m4/ex3_fg_mask1.png'
-    # config_path = 'config/ex3.yaml'
-    # edited_img_path_template = 'results/ex3'
-    # save_input_image = True
-    # save_input_mask = True
-    # save_depth = True
-    # save_bg_image = True
-    # save_recon_image = True
-    # load_intermediate_results = False
-    # save_intermediate_results = True
-
-    # ex2_edit4
-    rot_angles = [0.0]
-    rot_axis = torch.tensor([0.0, 1.0, 0.0])
-    # translations = [torch.tensor([0.0, 0.0, 0.0])]
-    translations = [torch.tensor([0.4,-0.15,-0.5])]
-    input_img_path = '../../data/m4/inputs/ex2_edit4/curr_image.png'
-    config_path = 'config/ex2.yaml'
-    prompt = "a spacious lobby"
-    foreground_mask_path = '../../data/m4/inputs/ex2_edit4/curr_mask.png'
-    edited_img_path_template = 'results/ex2_edit4'
-    save_input_image = True
-    save_input_mask = True
-    save_depth = True
-    save_bg_image = True
-    save_recon_image = True
-    load_intermediate_results = False
-    save_intermediate_results = True
 
     # # TEMP!
     # # need to:
@@ -144,142 +25,138 @@ def test_diffusion_handles():
     # import numpy as np
     # np.random.seed(54396745)
     # # TEMP!
-    
 
-    diff_handles = DiffusionHandles(conf_path=config_path)
-    diff_handles.to(device)
+    # load the test set info
+    # (use an OrderDict just so the samples are always in the same order)
+    with open(test_set_path, 'r') as f:
+        test_set_info = json.load(f, object_pairs_hook=OrderedDict)
 
-    if not load_intermediate_results:
+    # check samples for completeness
+    incomplete_samples = []
+    foreground_removal_samples = []
+    depth_estimation_samples = []
+    for sample_name, sample_info in test_set_info.items():
+        if not exists(join(input_dir, sample_name, 'input.png')) or not exists(join(input_dir, sample_name, 'mask.png')):
+            print(f"Skipping sample {sample_name}, since it is missing input.png or mask.png.")
+            incomplete_samples.append(sample_name)
+            continue
+        if not exists(join(input_dir, sample_name, 'bg_depth.exr')) and not exists(join(input_dir, sample_name, 'bg.png')):
+            foreground_removal_samples.append(sample_name)
+        if not exists(join(input_dir, sample_name, 'depth.exr')) or not exists(join(input_dir, sample_name, 'bg_depth.exr')):
+            depth_estimation_samples.append(sample_name)
 
-        img = load_image(input_img_path).unsqueeze(dim=0)
-        img = img.to(device)
+    # remove incomplete samples
+    if len(incomplete_samples) > 0:
+        for sample_name in incomplete_samples:
+            test_set_info.pop(sample_name)
+
+    # estimate missing background images (with removed foreground object)
+    if len(foreground_removal_samples) > 0:
+        remove_foreground(
+            input_image_paths=[join(input_dir, sample_name, 'input.png') for sample_name in foreground_removal_samples],
+            foreground_mask_paths=[join(input_dir, sample_name, 'mask.png') for sample_name in foreground_removal_samples],
+            output_paths=[join(input_dir, sample_name, 'bg.png') for sample_name in foreground_removal_samples])
+
+    # estimate missing depths
+    if len(depth_estimation_samples) > 0:
+        estimate_depth(
+            input_image_paths=[
+                join(input_dir, sample_name, 'input.png') for sample_name in depth_estimation_samples]+[
+                join(input_dir, sample_name, 'bg.png') for sample_name in depth_estimation_samples],
+            output_paths=[
+                join(input_dir, sample_name, 'depth.exr') for sample_name in depth_estimation_samples]+[
+                join(input_dir, sample_name, 'bg_depth.exr') for sample_name in depth_estimation_samples]
+            )
+
+    # iterate over test set samples
+    for sample_name, sample_info in test_set_info.items():
         
-        # check image resolution
-        if img.shape[-2:] != (diff_handles.img_res, diff_handles.img_res):
-            print(f"WARNING: Resizing and cropping image from {img.shape[-2]}x{img.shape[-1]} to {diff_handles.img_res}x{diff_handles.img_res}.")
-            img = crop_and_resize(img=img, size=diff_handles.img_res)
+        prompt = sample_info['prompt']
+        transforms = sample_info['transforms']
 
-        if save_input_image:
-            save_image(img[0].detach().cpu(), f'{edited_img_path_template}_input.png')
+        if 'config_path' in sample_info:
+            config_path = sample_info['config_path']
+        else:
+            config_path = None
+
+        diff_handles = DiffusionHandles(conf_path=config_path)
+        diff_handles.to(device)
+
+        makedirs(join(output_dir, sample_name), exist_ok=True)
+
+        # load inputs for the sample
+        img, fg_mask, depth, bg_depth = load_diffhandles_inputs(
+            sample_dir=join(input_dir, sample_name), img_res=diff_handles.img_res, device=device)
         
-        # load the foreground mask
-        fg_mask = load_image(foreground_mask_path).unsqueeze(dim=0)
-        if fg_mask.shape[1] > 1:
-            fg_mask = fg_mask.mean(dim=1, keepdim=True) # average channels
-        fg_mask = crop_and_resize(img=fg_mask, size=diff_handles.img_res)
-        fg_mask = (fg_mask>0.5).to(device=device, dtype=torch.float32)
+        # save inputs for visualization to results directory
+        save_image(img[0], join(output_dir, sample_name, 'input.png'))
+        save_image(fg_mask[0], join(output_dir, sample_name, 'mask.png'))
+        save_image((depth/depth.max())[0], join(output_dir, sample_name, 'depth.png'))
+        save_image((bg_depth/bg_depth.max())[0], join(output_dir, sample_name, 'bg_depth.png'))
 
-        if save_input_mask:
-            save_image(fg_mask[0, 0].detach().cpu(), f'{edited_img_path_template}_mask.png')
-
-        # inpaint the foreground region to get a background image without the foreground object
-        fg_mask_dilated = fg_mask.cpu().numpy() > 0.5
-        fg_mask_dilated = scipy.ndimage.binary_dilation(fg_mask_dilated[0, 0], iterations=2)[None, None, ...]
-        fg_mask_dilated = torch.from_numpy(fg_mask_dilated).to(device=device, dtype=torch.float32)
-        inpainter = LamaInpainter()
-        inpainter.to(device)
-        bg_img = inpainter.inpaint(image=img, mask=fg_mask_dilated)
-        del inpainter
-
-        if save_bg_image:
-            save_image(bg_img[0].detach().cpu(), f'{edited_img_path_template}_bg.png')
-
-        # estimate depth of the input image and the background image
-        depth_estimator = ZoeDepthEstimator()
-        depth_estimator.to(device)
-        with torch.no_grad():
-            depth = depth_estimator.estimate_depth(img=img)
-            bg_depth = depth_estimator.estimate_depth(img=bg_img)
-        del depth_estimator
-
-        if save_depth:
-            save_image((depth/depth.max())[0, 0].detach().cpu(), f'{edited_img_path_template}_depth.png')
-            save_image((bg_depth/bg_depth.max())[0, 0].detach().cpu(), f'{edited_img_path_template}_bg_depth.png')
-
-        # # set the input image to get inverted null text and noise
-        # # (this requires using the same depth preprocessing we use for the later steps, so best not do it with a separate function)
-        # inverted_null_text, inverted_noise, activations, activations2, activations3, latent_image = diff_handles.set_input_image(
-        #     img=img, depth=depth, prompt=prompt)
-
-        # # TEMP !!
-        # if dilate_amount > 0:
-        #     fg_mask = fg_mask.cpu().numpy() > 0.5
-        #     fg_mask = scipy.ndimage.binary_dilation(fg_mask[0, 0], iterations=dilate_amount)[None, None, ...]
-        #     fg_mask = torch.from_numpy(fg_mask).to(device=device, dtype=torch.float32)
-        # # TEMP !!
-        
-        # # select the foreground object
-        # bg_depth = diff_handles.select_foreground(
-        #     depth=depth, fg_mask=fg_mask, bg_depth=bg_depth)
-
+        # set the foreground object to get inverted null text, noise, and intermediate activations to use as guidance
         bg_depth, inverted_null_text, inverted_noise, activations, activations2, activations3, latent_image = diff_handles.set_foreground(
             img=img, depth=depth, prompt=prompt, fg_mask=fg_mask, bg_depth=bg_depth)
 
-        if save_recon_image:
-            with torch.no_grad():
-                latent_image = 1 / 0.18215 * latent_image.detach()
-                recon_image = diff_handles.diffuser.vae.decode(latent_image)['sample']
-                recon_image = (recon_image + 1) / 2
-            save_image(recon_image[0].clamp(min=0, max=1).detach().cpu(), f'{edited_img_path_template}_recon_image.png')
+        # save image reconstructed from inversion
+        with torch.no_grad():
+            latent_image = 1 / 0.18215 * latent_image.detach()
+            recon_image = diff_handles.diffuser.vae.decode(latent_image)['sample']
+            recon_image = (recon_image + 1) / 2
+        save_image(recon_image.clamp(min=0, max=1)[0], join(output_dir, sample_name, 'recon.png'))
 
-        if save_intermediate_results:
-            torch.save({
-                'depth': depth,
-                'prompt': prompt,
-                'fg_mask': fg_mask,
-                'bg_depth': bg_depth,
-                'inverted_null_text': inverted_null_text,
-                'inverted_noise': inverted_noise,
-                'activations': activations,
-                'activations2': activations2,
-                'activations3': activations3,
-            }, f'{edited_img_path_template}_intermediate_results.pt')
-    else:
-        intermediate_results = torch.load(f'{edited_img_path_template}_intermediate_results.pt')
-        depth = intermediate_results['depth']
-        prompt = intermediate_results['prompt']
-        fg_mask = intermediate_results['fg_mask']
-        bg_depth = intermediate_results['bg_depth']
-        inverted_null_text = intermediate_results['inverted_null_text']
-        inverted_noise = intermediate_results['inverted_noise']
-        activations = intermediate_results['activations']
-        activations2 = intermediate_results['activations2']
-        activations3 = intermediate_results['activations3']
-    
-    for edit_idx, rot_angle, translation in enumerate(zip(rot_angles, translations)):
 
-        # transform the foreground object
-        edited_img, raw_edited_depth = diff_handles.transform_foreground(
-            depth=depth, prompt=prompt,
-            fg_mask=fg_mask, bg_depth=bg_depth,
-            inverted_null_text=inverted_null_text, inverted_noise=inverted_noise, 
-            activations=activations, activations2=activations2, activations3=activations3,
-            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
-            use_input_depth_normalization=False)
+        for transform_idx, transform in enumerate(transforms):
 
-        if save_depth:
-            save_image((raw_edited_depth/raw_edited_depth.max())[0, 0].detach().cpu(), f'{edited_img_path_template}_edit_{edit_idx:03d}_raw_edited_depth.png')
+            # get transformation parameters
+            translation = torch.tensor(transform['translation'], dtype=torch.float32)
+            rot_axis = torch.tensor(transform['rotation_axis'], dtype=torch.float32)
+            rot_angle = float(transform['rotation_angle'])
 
-        # save the edited image
-        edited_img_path = f'{edited_img_path_template}_edit_{edit_idx:03d}.png'
-        save_image(edited_img.detach().cpu().squeeze(dim=0), edited_img_path)
+            # transform the foreground object
+            edited_img, raw_edited_depth, edited_disparity = diff_handles.transform_foreground(
+                depth=depth, prompt=prompt,
+                fg_mask=fg_mask, bg_depth=bg_depth,
+                inverted_null_text=inverted_null_text, inverted_noise=inverted_noise,
+                activations=activations, activations2=activations2, activations3=activations3,
+                rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
+                use_input_depth_normalization=False)
 
-def crop_and_resize(img: torch.Tensor, size: int) -> torch.Tensor:
-    if img.shape[-2] != img.shape[-1]:
-        img = torchvision.transforms.functional.center_crop(img, min(img.shape[-2], img.shape[-1]))
-    img = torchvision.transforms.functional.resize(img, size=(size, size), antialias=True)
-    return img
+            # save the edited depth
+            save_image((edited_disparity/edited_disparity.max())[0], join(output_dir, sample_name, f'edit_{transform_idx:03d}_disparity.png'))
+            save_image((raw_edited_depth/raw_edited_depth.max())[0], join(output_dir, sample_name, f'edit_{transform_idx:03d}_depth_raw.png'))
 
-def load_image(path: str) -> torch.Tensor:
-    img = Image.open(path)
-    img = img.convert('RGB')
-    img = torchvision.transforms.functional.pil_to_tensor(img)
-    img = img / 255.0
-    return img
+            # save the edited image
+            save_image(edited_img[0], join(output_dir, sample_name, f'edit_{transform_idx:03d}.png'))
 
-def save_image(img: torch.Tensor, path: str):
-    img = torchvision.transforms.functional.to_pil_image(img)
-    img.save(path)
+def load_diffhandles_inputs(sample_dir, img_res, device):
+
+    # load the input image
+    img = load_image(join(sample_dir, 'input.png'))[None, ...]
+    if img.shape[-2:] != (img_res, img_res):
+        print(f"WARNING: Resizing and cropping image from {img.shape[-2]}x{img.shape[-1]} to {img_res}x{img_res}.")
+        img = crop_and_resize(img=img, size=img_res)
+    img = img.to(device)
+
+    # load the foreground mask
+    fg_mask = load_image(join(sample_dir, 'mask.png'))[None, ...]
+    if fg_mask.shape[1] > 1:
+        fg_mask = fg_mask.mean(dim=1, keepdim=True) # average channels
+    fg_mask = crop_and_resize(img=fg_mask, size=img_res)
+    fg_mask = (fg_mask>0.5).to(device=device, dtype=torch.float32)
+
+    # load the input image depth
+    depth = load_depth(join(sample_dir, 'depth.exr'))[None, ...]
+    depth = crop_and_resize(img=depth, size=img_res)
+    depth = depth.to(device=device, dtype=torch.float32)
+
+    # load the background depth
+    bg_depth = load_depth(join(sample_dir, 'bg_depth.exr'))[None, ...]
+    bg_depth = crop_and_resize(img=bg_depth, size=img_res)
+    bg_depth = bg_depth.to(device=device, dtype=torch.float32)
+
+    return img, fg_mask, depth, bg_depth
 
 if __name__ == '__main__':
-    test_diffusion_handles()
+    test_diffusion_handles(test_set_path='data/test_set.json', input_dir='data', output_dir='results')
+    generate_results_webpage(test_set_path = 'data/test_set.json', website_path = 'results/results.html', relative_image_dir = '.')

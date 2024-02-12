@@ -255,4 +255,4 @@ class DiffusionHandles:
                 activations_orig=activations, activations2_orig=activations2, activations3_orig=activations3,
                 correspondences=correspondences)
 
-        return output_img, raw_edited_depth
+        return output_img, raw_edited_depth, edited_disparity

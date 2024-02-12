@@ -23,14 +23,19 @@ python = ">=3.9, <3.11"
 torch = ">=2.0"
 torchvision = "*"
 trimesh = "*"
+numpy = ">=1.24.1"
 scipy = "*"
 timm = "0.6.12" # required by ZoeDepth (the pretrained weights are for this version and do not work with some later versions)
 diffusers = ">=0.23"
+opencv-python = "*"
 transformers = ">=4.33"
 accelerate = "*"
+tqdm = ">=4.64.1"
 zoedepth = { git = "https://github.com/paulguerrero/ZoeDepth.git", optional = true }
 saicinpainting = { git = "https://github.com/paulguerrero/lama.git", optional = true }
 lang-sam = { git = "https://github.com/paulguerrero/lang-sam", optional = true }
+Jinja2 = { version = "*", optional = true } # for generating the test result website
+matplotlib = { version = "*", optional = true } # for the transform visualizer jupyter notebook
 
 [tool.poetry.extras]
-dev = ["zoedepth", "saicinpainting", "lang-sam"]
+dev = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib"]

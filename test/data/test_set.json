@@ -1,0 +1,22 @@
+{
+    "sunflower": {
+        "prompt": "a sunflower in the garden",
+        "transforms":[
+            {
+                "translation": [0.0, 0.0, 0.0],
+                "rotation_axis": [0.0, 1.0, 0.0],
+                "rotation_angle": 30.0
+            },
+            {
+                "translation": [0.0, 0.0, 0.0],
+                "rotation_axis": [0.0, 1.0, 0.0],
+                "rotation_angle": 55.0
+            },
+            {
+                "translation": [0.0, 0.0, 0.0],
+                "rotation_axis": [0.0, 1.0, 0.0],
+                "rotation_angle": 60.0
+            }
+        ]
+    }
+}
