@@ -12,23 +12,20 @@ from diffusers.configuration_utils import FrozenDict
 from diffusers.utils import deprecate
 from tqdm import tqdm
 
-from diffhandles.model.unet_2d_condition import UNet2DConditionModel as CustomUNet2DConditionModel
+from diffhandles.model.unet_2d_condition import UNet2DConditionModel # this is the custom UNet that can also return intermediate activations and attentions
 from diffhandles.guided_diffuser import GuidedDiffuser
 from diffhandles.utils import normalize_attn_torch, unpack_correspondences
 from diffhandles.losses import compute_localized_transformed_appearance_loss, compute_background_loss
 
 class GuidedStableDiffuser(GuidedDiffuser):
-    def __init__(self, custom_unet, conf):
+    def __init__(self, conf):
         super().__init__(conf=conf)
 
         model_name = "stabilityai/stable-diffusion-2-depth"
 
         self.scheduler = DDIMScheduler(
             beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
-        if custom_unet:
-            self.unet = CustomUNet2DConditionModel.from_pretrained(model_name, subfolder="unet")
-        else:
-            self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder="unet")
+        self.unet = UNet2DConditionModel.from_pretrained(model_name, subfolder="unet", save_activations=True)
         self.tokenizer = CLIPTokenizer.from_pretrained(model_name, subfolder="tokenizer")
         self.text_encoder = CLIPTextModel.from_pretrained(model_name, subfolder="text_encoder")
         self.vae = AutoencoderKL.from_pretrained(model_name, subfolder="vae")

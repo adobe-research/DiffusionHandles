@@ -202,7 +202,8 @@ def load_diffhandles_inputs(sample_dir, img_res, device):
     return img, fg_mask, depth, bg_depth
 
 if __name__ == '__main__':
-    # test_diffusion_handles(test_set_path='data/test_set.json', input_dir='data', output_dir='results')
-    # generate_results_webpage(test_set_path = 'data/test_set.json', website_path = 'results/results.html', relative_image_dir = '.')
-    test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen', skip_existing=True)
-    generate_results_webpage(test_set_path = 'results/photogen/photogen.json', website_path = 'results/photogen/photogen.html', relative_image_dir = '.')
+    # test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen', skip_existing=True)
+    # generate_results_webpage(test_set_path = 'results/photogen/photogen.json', website_path = 'results/photogen/photogen.html', relative_image_dir = '.')
+
+    test_diffusion_handles(test_set_path='data/photogen/sunflower.json', input_dir='data/photogen', output_dir='results/sunflower', skip_existing=True)
+    generate_results_webpage(test_set_path = 'results/sunflower/sunflower.json', website_path = 'results/sunflower/sunflower.html', relative_image_dir = '.')

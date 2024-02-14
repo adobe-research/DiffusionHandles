@@ -26,7 +26,7 @@ trimesh = "*"
 numpy = ">=1.24.1"
 scipy = "*"
 timm = "0.6.12" # required by ZoeDepth (the pretrained weights are for this version and do not work with some later versions)
-diffusers = ">=0.23"
+diffusers = "0.23.*" # since we use a custom denoising UNet that we obtain by patching the model in the diffusers library, we need the exact version
 opencv-python = "*"
 transformers = ">=4.33"
 accelerate = "*"
