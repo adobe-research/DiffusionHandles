@@ -5,28 +5,37 @@
 ### Requirements
 
 - [Conda](https://docs.conda.io/en/latest/miniconda.html)
-- [CUDA Toolkit](https://developer.nvidia.com/cuda-downloads) with nvcc compiler. The version needs to be compatible with [PyTorch](https://pytorch.org/).
 
 ### Install as Package (Experimental)
 
-Install Diffusion Handles as pip package:
+Install Diffusion Handles as pip package.
+
 ```bash
 pip install git+https://github.com/karranpandey/diffusionhandles.git
 ```
-TODO: Make sure this installs all necessary dependencies.
+TODO: make sure no dependencies are missing
 
 ### Install for Development
 
-Create conda environment:
+Also installs dependencies required to run test scripts and notebooks in the `test` folder. This should allow running all scripts and notebooks in the test folder.
+
+Create a conda environment:
 ```bash
 conda create -n diffusionhandles python=3.9
 conda activate diffusionhandles
 ```
 
-**Optional:** Install PyTorch explicitly, so you can select the CUDA version you have installed on your system (check their [webpage](https://pytorch.org/) for selecting a cuda version). Using the latest CUDA version, for example:
-```bash
-pip install torch torchvision
-```
+> **Optional Explicit CUDA & PyTorch Installation**
+>
+> If a CUDA version compatible with PyTorch is not installed on your system, install PyTorch with conda to make sure you have a CUDA version that works with PyTorch:
+> ```bash
+> conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+> ```
+>
+> If a suitable CUDA dev environment including nvcc is not installed on your system, install CUDA dev environment matching the CUDA runtime version:
+> ```bash
+> conda install cuda-libraries-dev=12.1 cuda-nvcc=12.1 cuda-nvtx=12.1 cuda-cupti=12.1 -c nvidia
+> ```
 
 Clone the Diffusion Handles repository:
 ```bash

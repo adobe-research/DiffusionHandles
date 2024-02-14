@@ -1,4 +1,4 @@
-from os.path import join, exists
+from os.path import join, exists, basename
 from os import makedirs
 import json
 from collections import OrderedDict
@@ -12,7 +12,7 @@ from generate_results_webpage import generate_results_webpage
 from utils import crop_and_resize, load_image, load_depth, save_image
 
 
-def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
+def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, skip_existing=False):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # # TEMP!
@@ -27,17 +27,17 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
     # # TEMP!
 
     # load the test set info
-    # (use an OrderDict just so the samples are always in the same order)
     with open(test_set_path, 'r') as f:
-        test_set_info = json.load(f, object_pairs_hook=OrderedDict)
+        dataset_names = json.load(f, object_pairs_hook=OrderedDict)
 
     # check samples for completeness
     incomplete_samples = []
     foreground_removal_samples = []
     depth_estimation_samples = []
-    for sample_name, sample_info in test_set_info.items():
-        if not exists(join(input_dir, sample_name, 'input.png')) or not exists(join(input_dir, sample_name, 'mask.png')):
-            print(f"Skipping sample {sample_name}, since it is missing input.png or mask.png.")
+    for sample_name in dataset_names.keys():
+        required_fnames = ['input.png', 'mask.png', 'prompt.txt', 'transforms.json']
+        if any(not exists(join(input_dir, sample_name, fname)) for fname in required_fnames):
+            print(f"Skipping sample {sample_name}, since it is missing one of the required input files ({required_fnames}).")
             incomplete_samples.append(sample_name)
             continue
         if not exists(join(input_dir, sample_name, 'bg_depth.exr')) and not exists(join(input_dir, sample_name, 'bg.png')):
@@ -46,12 +46,12 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
             depth_estimation_samples.append(sample_name)
 
     # remove incomplete samples
-    if len(incomplete_samples) > 0:
-        for sample_name in incomplete_samples:
-            test_set_info.pop(sample_name)
+    for sample_name in incomplete_samples:
+        del dataset_names[sample_name]
 
     # estimate missing background images (with removed foreground object)
     if len(foreground_removal_samples) > 0:
+        print(f"Estimating background images for {len(foreground_removal_samples)} samples ...")
         remove_foreground(
             input_image_paths=[join(input_dir, sample_name, 'input.png') for sample_name in foreground_removal_samples],
             foreground_mask_paths=[join(input_dir, sample_name, 'mask.png') for sample_name in foreground_removal_samples],
@@ -59,6 +59,7 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
 
     # estimate missing depths
     if len(depth_estimation_samples) > 0:
+        print(f"Estimating depth and background depth for {len(depth_estimation_samples)} samples ...")
         estimate_depth(
             input_image_paths=[
                 join(input_dir, sample_name, 'input.png') for sample_name in depth_estimation_samples]+[
@@ -69,25 +70,54 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
             )
 
     # iterate over test set samples
-    for sample_name, sample_info in test_set_info.items():
-        
-        prompt = sample_info['prompt']
-        transforms = sample_info['transforms']
+    print(f"Transforming for {len(dataset_names)} samples ...")
+    for sample_idx, (sample_name, transform_names) in enumerate(dataset_names.items()):
 
-        if 'config_path' in sample_info:
-            config_path = sample_info['config_path']
-        else:
-            config_path = None
+        # load prompt
+        with open(join(input_dir, sample_name, 'prompt.txt'), 'r') as f:
+            prompt = f.read().splitlines()
+        prompt = [prompt for prompt in prompt if len(prompt) > 0]
+        if len(prompt) == 0:
+            print(f'WARNING: prompt for sample {sample_name} is empty. Skipping sample.')
+            continue
+        if len(prompt) > 1:
+            print(f'WARNING: prompt for sample {sample_name} has multiple lines, only using the first line.')
+        prompt = prompt[0]
 
-        diff_handles = DiffusionHandles(conf_path=config_path)
-        diff_handles.to(device)
+        # load transforms
+        with open(join(input_dir, sample_name, 'transforms.json'), 'r') as f:
+            transforms = json.load(f, object_pairs_hook=OrderedDict)
+
+        # if all outputs already exist, skip sample
+        if skip_existing:
+            transform_exists = OrderedDict()
+            for transform_name, transform in transforms.items():
+                transform_path = join(output_dir, sample_name, f'{transform_name}.png')
+                transform_exists[transform_name] = exists(transform_path)
+            if all(transform_exists.values()):
+                print(f'Skipping sample {sample_name}, since all outputs already exist.')
+                continue
+
+        print(f"[{sample_idx+1}/{len(dataset_names)}] Transforming sample {sample_name} with {len(transforms)} transforms ...")
 
         makedirs(join(output_dir, sample_name), exist_ok=True)
+
+        # save prompt to output directory
+        with open(join(output_dir, sample_name, 'prompt.txt'), 'w') as f:
+            f.write(f'{prompt}\n')
+
+        # save transforms to output directory
+        with open(join(output_dir, sample_name, 'transforms.json'), 'w') as f:
+            json.dump(transforms, f, indent=4)
+
+        config_path = None
+        diff_handles = DiffusionHandles(conf_path=config_path)
+        diff_handles.to(device)
 
         # load inputs for the sample
         img, fg_mask, depth, bg_depth = load_diffhandles_inputs(
             sample_dir=join(input_dir, sample_name), img_res=diff_handles.img_res, device=device)
-        
+
         # save inputs for visualization to results directory
         save_image(img[0], join(output_dir, sample_name, 'input.png'))
         save_image(fg_mask[0], join(output_dir, sample_name, 'mask.png'))
@@ -105,8 +135,18 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
             recon_image = (recon_image + 1) / 2
         save_image(recon_image.clamp(min=0, max=1)[0], join(output_dir, sample_name, 'recon.png'))
 
+        # iterate over the transformations
+        for transform_name in transform_names:
 
-        for transform_idx, transform in enumerate(transforms):
+            if transform_name not in transforms:
+                print(f'WARNING: Transform {transform_name} not found for sample {sample_name}. Skipping.')
+                continue
+
+            if skip_existing and transform_exists[transform_name]:
+                print(f'Skipping transform {transform_name} of sample {sample_name}, since its output already exists.')
+                continue
+
+            transform = transforms[transform_name]
 
             # get transformation parameters
             translation = torch.tensor(transform['translation'], dtype=torch.float32)
@@ -123,11 +163,15 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str):
                 use_input_depth_normalization=False)
 
             # save the edited depth
-            save_image((edited_disparity/edited_disparity.max())[0], join(output_dir, sample_name, f'edit_{transform_idx:03d}_disparity.png'))
-            save_image((raw_edited_depth/raw_edited_depth.max())[0], join(output_dir, sample_name, f'edit_{transform_idx:03d}_depth_raw.png'))
+            save_image((edited_disparity/edited_disparity.max())[0], join(output_dir, sample_name, f'{transform_name}_disparity.png'))
+            save_image((raw_edited_depth/raw_edited_depth.max())[0], join(output_dir, sample_name, f'{transform_name}_depth_raw.png'))
 
             # save the edited image
-            save_image(edited_img[0], join(output_dir, sample_name, f'edit_{transform_idx:03d}.png'))
+            save_image(edited_img[0], join(output_dir, sample_name, f'{transform_name}.png'))
+
+    # save sample names to result directory
+    with open(join(output_dir, basename(test_set_path)), 'w') as f:
+        json.dump(dataset_names, f, indent=4)
 
 def load_diffhandles_inputs(sample_dir, img_res, device):
 
@@ -158,5 +202,7 @@ def load_diffhandles_inputs(sample_dir, img_res, device):
     return img, fg_mask, depth, bg_depth
 
 if __name__ == '__main__':
-    test_diffusion_handles(test_set_path='data/test_set.json', input_dir='data', output_dir='results')
-    generate_results_webpage(test_set_path = 'data/test_set.json', website_path = 'results/results.html', relative_image_dir = '.')
+    # test_diffusion_handles(test_set_path='data/test_set.json', input_dir='data', output_dir='results')
+    # generate_results_webpage(test_set_path = 'data/test_set.json', website_path = 'results/results.html', relative_image_dir = '.')
+    test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen', skip_existing=True)
+    generate_results_webpage(test_set_path = 'results/photogen/photogen.json', website_path = 'results/photogen/photogen.html', relative_image_dir = '.')

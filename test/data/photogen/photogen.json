@@ -1,0 +1,132 @@
+{
+    "car": [
+        "edit_000",
+        "edit_001",
+        "edit_002",
+        "edit_003",
+        "edit_004"
+    ],
+    "car_2": [
+        "edit_000",
+        "edit_001",
+        "edit_002",
+        "edit_003",
+        "edit_004",
+        "edit_005",
+        "edit_006",
+        "edit_007",
+        "edit_008",
+        "edit_009",
+        "edit_010",
+        "edit_011",
+        "edit_012",
+        "edit_013",
+        "edit_014",
+        "edit_015",
+        "edit_016",
+        "edit_017",
+        "edit_018",
+        "edit_019"
+    ],
+    "car_3": [
+        "edit_000",
+        "edit_001"
+    ],
+    "chair": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ],
+    "chair_2": [
+        "edit_000",
+        "edit_001",
+        "edit_002",
+        "edit_003"
+    ],
+    "chrome_headlight": [
+        "edit_000",
+        "edit_001"
+    ],
+    "cube_toy": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ],
+    "dice": [
+        "edit_000",
+        "edit_001"
+    ],
+    "fighter_jet": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ],
+    "potted_plant": [
+        "edit_000",
+        "edit_001",
+        "edit_002",
+        "edit_003",
+        "edit_004"
+    ],
+    "milk_carton": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ],
+    "plane": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ],
+    "red_block": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ],
+    "shoe": [
+        "edit_000",
+        "edit_001",
+        "edit_002",
+        "edit_003",
+        "edit_004",
+        "edit_005"
+    ],
+    "sunflower": [
+        "edit_000",
+        "edit_001",
+        "edit_002",
+        "edit_003",
+        "edit_004",
+        "edit_005",
+        "edit_006",
+        "edit_007",
+        "edit_008",
+        "edit_009",
+        "edit_010",
+        "edit_011",
+        "edit_012",
+        "edit_013"
+    ],
+    "potted_plant_2": [
+        "edit_000",
+        "edit_001"
+    ],
+    "wine_glass": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ],
+    "toaster": [
+        "edit_000",
+        "edit_001"
+    ],
+    "guitar": [
+        "edit_000",
+        "edit_001"
+    ],
+    "banana_fruits": [
+        "edit_000",
+        "edit_001",
+        "edit_002"
+    ]
+}

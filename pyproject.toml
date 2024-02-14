@@ -31,11 +31,11 @@ opencv-python = "*"
 transformers = ">=4.33"
 accelerate = "*"
 tqdm = ">=4.64.1"
-zoedepth = { git = "https://github.com/paulguerrero/ZoeDepth.git", optional = true }
-saicinpainting = { git = "https://github.com/paulguerrero/lama.git", optional = true }
-lang-sam = { git = "https://github.com/paulguerrero/lang-sam", optional = true }
+zoedepth = { git = "https://github.com/paulguerrero/ZoeDepth.git", optional = true } # for depth estimation
+saicinpainting = { git = "https://github.com/paulguerrero/lama.git", optional = true } # for foreground removal
 Jinja2 = { version = "*", optional = true } # for generating the test result website
 matplotlib = { version = "*", optional = true } # for the transform visualizer jupyter notebook
+lang-sam = { git = "https://github.com/paulguerrero/lang-sam", optional = true } # for foreground mask estimation from a text prompt
 
 [tool.poetry.extras]
 dev = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib"]

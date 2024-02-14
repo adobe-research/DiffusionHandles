@@ -1,0 +1,28 @@
+{
+    "edit_000": {
+        "translation": [
+            -1.25,
+            0.15,
+            0.5
+        ],
+        "rotation_axis": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "rotation_angle": 30.0
+    },
+    "edit_001": {
+        "translation": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "rotation_axis": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "rotation_angle": 0.0
+    }
+}

@@ -1,0 +1,67 @@
+{
+    "edit_000": {
+        "translation": [
+            -2.07,
+            0.41,
+            2.04
+        ],
+        "rotation_axis": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "rotation_angle": 0.0
+    },
+    "edit_001": {
+        "translation": [
+            0.0,
+            0.0,
+            0.0
+        ],
+        "rotation_axis": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "rotation_angle": 0.0
+    },
+    "edit_002": {
+        "translation": [
+            1.25,
+            -0.65,
+            -2.61
+        ],
+        "rotation_axis": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "rotation_angle": 13.6
+    },
+    "edit_003": {
+        "translation": [
+            1.48,
+            -0.65,
+            -2.61
+        ],
+        "rotation_axis": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "rotation_angle": 0.0
+    },
+    "edit_004": {
+        "translation": [
+            2.48,
+            -0.5,
+            -1.54
+        ],
+        "rotation_axis": [
+            0.0,
+            1.0,
+            0.0
+        ],
+        "rotation_angle": 0.0
+    }
+}
