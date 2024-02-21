@@ -1,4 +1,4 @@
 guided_diffuser:
   bg_weight: 1.25
   fg_weight: 1.5
-  use_depth: true
+  use_depth: false

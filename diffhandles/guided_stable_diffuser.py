@@ -21,7 +21,10 @@ class GuidedStableDiffuser(GuidedDiffuser):
     def __init__(self, conf):
         super().__init__(conf=conf)
 
-        model_name = "stabilityai/stable-diffusion-2-depth"
+        if self.conf.use_depth:
+            model_name = "stabilityai/stable-diffusion-2-depth"
+        else:       
+            model_name = "stabilityai/stable-diffusion-2-1"
 
         self.scheduler = DDIMScheduler(
             beta_start=0.00085, beta_end=0.012, beta_schedule="scaled_linear", clip_sample=False, set_alpha_to_one=False)
@@ -56,9 +59,9 @@ class GuidedStableDiffuser(GuidedDiffuser):
             deprecate(
                 "sample_size<64", "1.0.0", deprecation_message, standard_warn=False
             )
-            new_config = dict(self.unet.config)
-            new_config["sample_size"] = 64
-            self.unet._internal_dict = FrozenDict(new_config)
+            new_unet_config = dict(self.unet.config)
+            new_unet_config["sample_size"] = 64
+            self.unet._internal_dict = FrozenDict(new_unet_config)
             self.unet.sample_size = 64
 
     def to(self, device: torch.device = None):
@@ -140,19 +143,9 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
     def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str): #, phrases: List[str]):
 
-        depth = self.init_depth(depth)
-        # depth = normalize_depth(depth)
+        if self.conf.use_depth:
+            depth = self.init_depth(depth)
         
-        # # Get Object Positions
-        # object_positions = phrase_to_index(prompt, phrases)
-
-        # # Encode Classifier Embeddings
-        # uncond_input = self.tokenizer(
-        #     [""], padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
-        # )
-        
-        #uncond_embeddings = text_encoder(uncond_input.input_ids.to(device))[0]
-
         # Encode Prompt
         input_ids = self.tokenizer(
                 [prompt],
@@ -163,17 +156,12 @@ class GuidedStableDiffuser(GuidedDiffuser):
             )
 
         cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
-        #text_embeddings = torch.cat([uncond_embeddings, cond_embeddings])
-        #text_embeddings = torch.cat([uncond_embeddings[i].expand(*text_embeddings.shape), cond_embeddings])
         
         generator = torch.manual_seed(2773)  # Seed generator to create the inital latent noise - 305 for car, 105 for cup, 155 for lamp
         
 
         strength = 1.0
         
-        #Preprocess image
-        #image = preprocess(image)
-
         #Set timesteps
         self.scheduler.set_timesteps(50, device=self.device)
         timesteps, num_inference_steps = self.get_timesteps(50, strength)
@@ -186,16 +174,14 @@ class GuidedStableDiffuser(GuidedDiffuser):
         activation3_list = []
         
         # obj_number = 2
-        depth_iter = True
         timestep_num = 0
         for index, t in enumerate(tqdm(timesteps)):
             with torch.no_grad():
-                #print(index)
-                #latent_timestep = timesteps[index:index+1]
+
                 #Prepare latent variables
                 latent_model_input = latents #torch.cat([latents]) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                if(depth_iter):
+                if self.conf.use_depth:
                     latent_model_input = torch.cat([latent_model_input, depth], dim=1)
 
                 # predict the noise residual
@@ -227,7 +213,8 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
                 latent_model_input = torch.cat([latents]*2) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
+                if self.conf.use_depth:
+                    latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
 
 
                 text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
@@ -253,13 +240,6 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 torch.cuda.empty_cache()
                 timestep_num += 1
         
-        # # TEMP!
-        # with torch.no_grad():
-        #     image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-        #     image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-        # return attention_list, activation_list, activation2_list, activation3_list, image
-        # # TEMP! (comment back in below)
-        
         return activation_list, activation2_list, activation3_list, latents
 
     def guided_inference(
@@ -269,20 +249,9 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
         processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
         
-        # depth = normalize_depth(depth)
-        depth = self.init_depth(depth)
+        if self.conf.use_depth:
+            depth = self.init_depth(depth)
         
-        # # Get Object Positions
-        # object_positions = phrase_to_index(prompt, phrases)
-
-        # negative_prompt = "bad, deformed, ugly, bad anotomy"
-        
-        # # Encode Classifier Embeddings
-        # uncond_input = self.tokenizer(
-        #     [""] * 1, padding="max_length", max_length=self.tokenizer.model_max_length, return_tensors="pt"
-        # )
-        # #uncond_embeddings = text_encoder(uncond_input.input_ids.to(device))[0]
-
         # Encode Prompt
         input_ids = self.tokenizer(
                 [prompt],
@@ -307,8 +276,6 @@ class GuidedStableDiffuser(GuidedDiffuser):
         
         obj_number = 2
         
-        depth_iter = True
-        
         for index, t in enumerate(tqdm(timesteps)):
             iteration = 0
             # attention_map_orig = attention_maps_orig[timestep_num]
@@ -325,7 +292,8 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 latents = latents.requires_grad_(True)
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                latent_model_input = torch.cat([latent_model_input, depth], dim=1)
+                if self.conf.use_depth:
+                    latent_model_input = torch.cat([latent_model_input, depth], dim=1)
                                 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -429,14 +397,12 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 iteration += 1
                 torch.cuda.empty_cache() 
                 
-            prev_t = t
-
             torch.set_grad_enabled(False)            
             with torch.no_grad():
 
                 latent_model_input = torch.cat([latents] * 2) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
-                if(depth_iter):
+                if self.conf.use_depth:
                     latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
 
                 text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
@@ -496,9 +462,6 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
         for x, y in zip(visible_trans_x, visible_trans_y):
             transformed_mask[y,x] = 1        
-            
-        # visualize_img(original_mask, 'original_mask')
-        # visualize_img(transformed_mask,'transform_mask')
         
         original_x, original_y, transformed_x, transformed_y = (
             np.array(visible_orig_x), np.array(visible_orig_y), np.array(visible_trans_x), np.array(visible_trans_y))

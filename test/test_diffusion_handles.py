@@ -4,6 +4,7 @@ import json
 from collections import OrderedDict
 
 import torch
+from omegaconf import OmegaConf
 from diffhandles import DiffusionHandles
 
 from remove_foreground import remove_foreground
@@ -12,7 +13,7 @@ from generate_results_webpage import generate_results_webpage
 from utils import crop_and_resize, load_image, load_depth, save_image
 
 
-def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, skip_existing=False):
+def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, skip_existing=False, config_path=None):
     device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
     # # TEMP!
@@ -69,6 +70,14 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
                 join(input_dir, sample_name, 'bg_depth.exr') for sample_name in depth_estimation_samples]
             )
 
+    diff_handles = DiffusionHandles(conf_path=config_path)
+    diff_handles.to(device)
+
+    # save config to output directory
+    makedirs(output_dir, exist_ok=True)
+    with open(join(output_dir, 'config.yaml'), 'w') as f:
+        OmegaConf.save(config=diff_handles.conf, f=f)
+
     # iterate over test set samples
     print(f"Transforming for {len(dataset_names)} samples ...")
     for sample_idx, (sample_name, transform_names) in enumerate(dataset_names.items()):
@@ -110,10 +119,6 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
         with open(join(output_dir, sample_name, 'transforms.json'), 'w') as f:
             json.dump(transforms, f, indent=4)
 
-        config_path = None
-        diff_handles = DiffusionHandles(conf_path=config_path)
-        diff_handles.to(device)
-
         # load inputs for the sample
         img, fg_mask, depth, bg_depth = load_diffhandles_inputs(
             sample_dir=join(input_dir, sample_name), img_res=diff_handles.img_res, device=device)
@@ -123,6 +128,10 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
         save_image(fg_mask[0], join(output_dir, sample_name, 'mask.png'))
         save_image((depth/depth.max())[0], join(output_dir, sample_name, 'depth.png'))
         save_image((bg_depth/bg_depth.max())[0], join(output_dir, sample_name, 'bg_depth.png'))
+        if exists(join(input_dir, sample_name, 'bg.png')):
+            bg_img = load_image(join(input_dir, sample_name, 'bg.png'))[None, ...]
+            bg_img = crop_and_resize(img=bg_img, size=diff_handles.img_res)
+            save_image(bg_img[0], join(output_dir, sample_name, 'bg.png'))
 
         # set the foreground object to get inverted null text, noise, and intermediate activations to use as guidance
         bg_depth, inverted_null_text, inverted_noise, activations, activations2, activations3, latent_image = diff_handles.set_foreground(
@@ -205,5 +214,11 @@ if __name__ == '__main__':
     # test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen', skip_existing=True)
     # generate_results_webpage(test_set_path = 'results/photogen/photogen.json', website_path = 'results/photogen/photogen.html', relative_image_dir = '.')
 
-    test_diffusion_handles(test_set_path='data/photogen/sunflower.json', input_dir='data/photogen', output_dir='results/sunflower', skip_existing=True)
-    generate_results_webpage(test_set_path = 'results/sunflower/sunflower.json', website_path = 'results/sunflower/sunflower.html', relative_image_dir = '.')
+    test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen_sanity', skip_existing=True)
+    generate_results_webpage(test_set_path = 'results/photogen_sanity/photogen.json', website_path = 'results/photogen_sanity/photogen_sanity.html', relative_image_dir = '.')
+
+    # test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen_no_depth', skip_existing=True, config_path='config/no_depth.yaml')
+    # generate_results_webpage(test_set_path = 'results/photogen_no_depth/photogen.json', website_path = 'results/photogen_no_depth/photogen_no_depth.html', relative_image_dir = '.')
+
+    # test_diffusion_handles(test_set_path='data/photogen/sunflower.json', input_dir='data/photogen', output_dir='results/sunflower', skip_existing=True)
+    # generate_results_webpage(test_set_path = 'results/sunflower/sunflower.json', website_path = 'results/sunflower/sunflower.html', relative_image_dir = '.')

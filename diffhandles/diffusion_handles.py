@@ -19,8 +19,6 @@ class DiffusionHandles:
         
         self.conf = OmegaConf.load(conf_path)
 
-        # TODO: separately toggle saving activations and saving attentions on/off, since both require a lot of time - making the diffuser twice as slow -
-        # (although I think saving attentions requires more time and we currently don't need them)
         self.diffuser = GuidedStableDiffuser(conf=self.conf.guided_diffuser)
         self.inverter = StableNullInverter(self.diffuser)
 

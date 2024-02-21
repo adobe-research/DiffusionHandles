@@ -26,7 +26,7 @@ def generate_results_webpage(test_set_path, website_path, relative_image_dir):
                 input_url=f'{relative_image_dir}/{sample_name}/input.png',
                 mask_url=f'{relative_image_dir}/{sample_name}/mask.png',
                 depth_url=f'{relative_image_dir}/{sample_name}/depth.png',
-                # bg_url=f'{relative_image_dir}/{sample_name}/bg.png',
+                bg_url=f'{relative_image_dir}/{sample_name}/bg.png',
                 bg_depth_url=f'{relative_image_dir}/{sample_name}/bg_depth.png',
                 inverted_url=f'{relative_image_dir}/{sample_name}/recon.png',
                 edit=f'{relative_image_dir}/{sample_name}/{transform_name}.png',
