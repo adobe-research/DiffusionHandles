@@ -144,9 +144,9 @@ class StableNullInverter(NullInverter):
             latent_prev = latents[len(latents) - i - 2]
             t = self.model.scheduler.timesteps[i]
             with torch.no_grad():
-                noise_pred_cond = self.get_noise_pred_single(latent_cur, t, cond_embeddings)
+                noise_pred_cond = self.get_noise_pred_single(latents=latent_cur, t=t, context=cond_embeddings, depth=depth)
             for j in range(num_inner_steps):
-                noise_pred_uncond = self.get_noise_pred_single(latent_cur, t, uncond_embeddings)
+                noise_pred_uncond = self.get_noise_pred_single(latents=latent_cur, t=t, context=uncond_embeddings, depth=depth)
                 noise_pred = noise_pred_uncond + self.guidance_scale * (noise_pred_cond - noise_pred_uncond)
                 latents_prev_rec = self.prev_step(noise_pred, t, latent_cur)
                 loss = torch.nn.functional.mse_loss(latents_prev_rec, latent_prev)
