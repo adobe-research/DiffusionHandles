@@ -2,6 +2,7 @@ from os.path import join, exists, basename
 from os import makedirs
 import json
 from collections import OrderedDict
+import argparse
 
 import torch
 from omegaconf import OmegaConf
@@ -210,15 +211,17 @@ def load_diffhandles_inputs(sample_dir, img_res, device):
 
     return img, fg_mask, depth, bg_depth
 
+def parse_args():
+    parser = argparse.ArgumentParser()
+    parser.add_argument('--test_set_path', type=str, default='data/photogen/photogen.json')
+    parser.add_argument('--input_dir', type=str, default='data/photogen')
+    parser.add_argument('--output_dir', type=str, default='results/photogen')
+    parser.add_argument('--skip_existing', action='store_true')
+    parser.add_argument('--config_path', type=str, default=None)
+    return parser.parse_args()
+
 if __name__ == '__main__':
-    # test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen', skip_existing=True)
-    # generate_results_webpage(test_set_path = 'results/photogen/photogen.json', website_path = 'results/photogen/photogen.html', relative_image_dir = '.')
+    args = parse_args()
 
-    test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen_sanity', skip_existing=True)
-    generate_results_webpage(test_set_path = 'results/photogen_sanity/photogen.json', website_path = 'results/photogen_sanity/photogen_sanity.html', relative_image_dir = '.')
-
-    # test_diffusion_handles(test_set_path='data/photogen/photogen.json', input_dir='data/photogen', output_dir='results/photogen_no_depth', skip_existing=True, config_path='config/no_depth.yaml')
-    # generate_results_webpage(test_set_path = 'results/photogen_no_depth/photogen.json', website_path = 'results/photogen_no_depth/photogen_no_depth.html', relative_image_dir = '.')
-
-    # test_diffusion_handles(test_set_path='data/photogen/sunflower.json', input_dir='data/photogen', output_dir='results/sunflower', skip_existing=True)
-    # generate_results_webpage(test_set_path = 'results/sunflower/sunflower.json', website_path = 'results/sunflower/sunflower.html', relative_image_dir = '.')
+    test_diffusion_handles(test_set_path=args.test_set_path, input_dir=args.input_dir, output_dir=args.output_dir, skip_existing=args.skip_existing, config_path=args.config_path)
+    generate_results_webpage(test_set_path=join(args.output_dir, basename(args.test_set_path)), website_path=join(args.output_dir, 'summary.html'), relative_image_dir='.')
