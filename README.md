@@ -1,12 +1,10 @@
 # DiffusionHandles
 
-## Installation
-
-### Requirements
+## Requirements
 
 - [Conda](https://docs.conda.io/en/latest/miniconda.html)
 
-### Install as Package (Experimental)
+## Install as Package (Experimental)
 
 Install Diffusion Handles as pip package.
 
@@ -15,7 +13,7 @@ pip install git+https://github.com/karranpandey/diffusionhandles.git
 ```
 TODO: make sure no dependencies are missing
 
-### Install for Development
+## Install for Development
 
 Also installs dependencies required to run test scripts and notebooks in the `test` folder. This should allow running all scripts and notebooks in the test folder.
 
@@ -46,4 +44,23 @@ Install as editable package with development dependencies:
 ```bash
 cd diffusionhandles
 pip install -e .[dev]
+```
+
+Install freeimage binaries to allow load and writing exr images:
+```bash
+imageio_download_bin freeimage
+```
+
+## Install as Web App (Experimental)
+
+Follow the steps to install for development, replacing the following step to use the `webapp` extras instead of `dev` extras:
+```bash
+cd diffusionhandles
+pip install -e .[webapp]
+```
+
+Start the server (use [tmux](https://github.com/tmux/tmux/wiki) or similar to keep the server running in the background):
+```bash
+cd webapp
+python webapp.py
 ```
