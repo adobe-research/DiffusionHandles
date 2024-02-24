@@ -40,7 +40,8 @@ lang-sam = { git = "https://github.com/paulguerrero/lang-sam", optional = true }
 gradio = { version = "*", optional = true } # for the web app
 fastapi = { version = "*", optional = true } # for the web app
 uvicorn = { version = "*", extras = ["standard"], optional = true } # for the web app
+gradio_hdrimage = { version = "*", optional = true } # for the web app
 
 [tool.poetry.extras]
 dev = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib"]
-webapp = ["zoedepth", "saicinpainting", "gradio", "fastapi", "uvicorn"]
+webapp = ["zoedepth", "saicinpainting", "gradio", "fastapi", "uvicorn", "gradio_hdrimage"]

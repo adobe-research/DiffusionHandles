@@ -62,5 +62,5 @@ pip install -e .[webapp]
 Start the server (use [tmux](https://github.com/tmux/tmux/wiki) or similar to keep the server running in the background):
 ```bash
 cd webapp
-python webapp.py
+python diffhandles_webapp.py
 ```
