@@ -1,11 +1,9 @@
 import os
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
 import sys
-import pathlib
 import argparse
 
 import torch
-import numpy as np
 import numpy.typing as npt
 import gradio as gr
 from gradio_hdrimage import HDRImage
@@ -31,7 +29,7 @@ class DiffhandlesWebapp:
             rot_angle: float = 0.0, rot_axis_x: float = 0.0, rot_axis_y: float = 1.0, rot_axis_z: float = 0.0,
             trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0):
 
-        print('run_diffhandles')
+        # print('run_diffhandles')
 
         if any(inp is None for inp in [prompt, img, fg_mask, depth, bg_depth]):
             return None
@@ -47,17 +45,13 @@ class DiffhandlesWebapp:
         fg_mask = torch.from_numpy(fg_mask).to(device=self.diff_handles.device, dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
         depth = torch.from_numpy(depth).to(device=self.diff_handles.device, dtype=torch.float32)[None, None, ...]
         bg_depth = torch.from_numpy(bg_depth).to(device=self.diff_handles.device, dtype=torch.float32)[None, None, ...]
-
         img = crop_and_resize(img=img, size=self.img_res)
-
         if fg_mask.shape[1] > 1:
             fg_mask = fg_mask.mean(dim=1, keepdim=True) # average channels
         fg_mask = crop_and_resize(img=fg_mask, size=self.img_res)
         fg_mask = (fg_mask>0.5).to(device=self.diff_handles.device, dtype=torch.float32)
-
         depth = crop_and_resize(img=depth, size=self.img_res)
         bg_depth = crop_and_resize(img=bg_depth, size=self.img_res)
-
         rot_axis = torch.tensor([rot_axis_x, rot_axis_y, rot_axis_z], dtype=torch.float32, device=self.diff_handles.device)
         translation = torch.tensor([trans_x, trans_y, trans_z], dtype=torch.float32, device=self.diff_handles.device)
 
@@ -152,11 +146,13 @@ def parse_args():
     parser = argparse.ArgumentParser()
     parser.add_argument('--netpath', type=str, default='/diffhandles')
     parser.add_argument('--port', type=int, default=6006)
+    parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--config_path', type=str, default=None)
     return parser.parse_args()
 
 if __name__ == '__main__':
     args = parse_args()
 
-    server = DiffhandlesWebapp(netpath=args.netpath, port=args.port, config_path=args.config_path)
+    server = DiffhandlesWebapp(netpath=args.netpath, port=args.port, config_path=args.config_path, device=args.device)
     server.start()
+s

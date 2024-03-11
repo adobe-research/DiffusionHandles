@@ -4,7 +4,7 @@ import glob
 import torch
 import scipy
 
-from lama_inpainter import LamaInpainter
+from saicinpainting import LamaInpainter
 from utils import crop_and_resize, load_image, save_image
 
 
