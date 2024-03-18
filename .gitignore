@@ -4,4 +4,6 @@ __pycache__
 
 test/results
 
+webapp/results
+
 **/.ipynb_checkpoints

@@ -34,14 +34,15 @@ tqdm = ">=4.64.1"
 zoedepth = { git = "https://github.com/paulguerrero/ZoeDepth.git", optional = true } # for depth estimation
 saicinpainting = { git = "https://github.com/paulguerrero/lama.git", optional = true } # for foreground removal
 omegaconf = "*"
+imageio = { version = "*", optional = true } # to load exr images
 Jinja2 = { version = "*", optional = true } # for generating the test result website
 matplotlib = { version = "*", optional = true } # for the transform visualizer jupyter notebook
 lang-sam = { git = "https://github.com/paulguerrero/lang-sam", optional = true } # for foreground mask estimation from a text prompt
-gradio = { version = "*", optional = true } # for the web app
+gradio = { version = ">=4.21.0", optional = true } # for the web app
 fastapi = { version = "*", optional = true } # for the web app
 uvicorn = { version = "*", extras = ["standard"], optional = true } # for the web app
 gradio_hdrimage = { version = "*", optional = true } # for the web app
 
 [tool.poetry.extras]
-dev = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib"]
+dev = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib", "imageio"]
 webapp = ["zoedepth", "saicinpainting", "gradio", "fastapi", "uvicorn", "gradio_hdrimage"]

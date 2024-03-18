@@ -3,21 +3,23 @@ from typing import Tuple
 
 import gradio_client
 
-class DiffhandlesClient():
+class DiffhandlesPipelineClient():
     def __init__(self, url: str, timeout_seconds: float = None):
         self.url = url
         self.client = gradio_client.Client(url, upload_files=True, download_files=True)
         self.timeout_seconds = timeout_seconds
 
     def edit_image(
-            self, prompt: str, img_path: str, fg_mask_path: str, depth_path: str, bg_depth_path: str,
+            self, prompt: str, img_path: str, fg_mask_path: str,
             rot_angle: float = 0.0, rot_axis: Tuple[float, float, float] = (0.0, 1.0, 0.0),
-            translation: Tuple[float, float, float] = (0.0, 0.0, 0.0)):
+            translation: Tuple[float, float, float] = (0.0, 0.0, 0.0),
+            fg_mask_dilation: int = 3):
         
         job = self.client.submit(
-            prompt, gradio_client.file(img_path), gradio_client.file(fg_mask_path), gradio_client.file(depth_path), gradio_client.file(bg_depth_path),
+            prompt, gradio_client.file(img_path), gradio_client.file(fg_mask_path),
             rot_angle, rot_axis[0], rot_axis[1], rot_axis[2],
-            translation[0], translation[1], translation[2])
+            translation[0], translation[1], translation[2],
+            fg_mask_dilation)
             # api_name="/predict")
         
         job_time = 0
@@ -32,13 +34,11 @@ class DiffhandlesClient():
         return edited_image_path
 
 if __name__ == '__main__':
-    client = DiffhandlesClient(url="http://localhost:6006/diffhandles")
+    client = DiffhandlesPipelineClient(url="http://localhost:6009/dh")
     edited_image_path = client.edit_image(
         prompt="a sunflower in the garden",
         img_path="data/sunflower/input.png",
         fg_mask_path="data/sunflower/mask.png",
-        depth_path="data/sunflower/depth.exr",
-        bg_depth_path="data/sunflower/bg_depth.exr",
         rot_angle=15.0,
         rot_axis=(0.0, 1.0, 0.0),
         translation=(0.0, 0.0, 0.0),

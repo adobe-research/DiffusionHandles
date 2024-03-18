@@ -1,16 +1,16 @@
 import time
 
-from gradio_client import Client
+import gradio_client
 
 class ZoeDepthClient():
     def __init__(self, url: str, timeout_seconds: float = None):
         self.url = url
-        self.client = Client(url, upload_files=True, download_files=True)
+        self.client = gradio_client.Client(url, upload_files=True, download_files=True)
         self.timeout_seconds = timeout_seconds
 
     def estimate_depth(self, img_path: str):
 
-        job = self.client.submit(img_path)
+        job = self.client.submit(gradio_client.file(img_path))
 
         job_time = 0
         while not job.done():
@@ -26,10 +26,10 @@ class ZoeDepthClient():
 if __name__ == '__main__':
     client = ZoeDepthClient(url="http://localhost:6007/zoe_depth")
     depth_path = client.estimate_depth(
-        img_path="../test/data/photogen/sunflower/input.png"
+        img_path="data/sunflower/input.png"
     )
     import os
     import shutil
-    os.makedirs('../test/results/webapp/sunflower', exist_ok=True)
-    shutil.copyfile(depth_path, "../test/results/webapp/sunflower/depth.exr")
+    os.makedirs('results/webapp/sunflower', exist_ok=True)
+    shutil.copyfile(depth_path, "results/webapp/sunflower/depth.exr")
     print('done')

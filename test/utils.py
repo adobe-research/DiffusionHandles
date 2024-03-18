@@ -3,6 +3,8 @@ import torchvision
 from PIL import Image
 import imageio.v3 as imageio
 
+imageio.plugins.freeimage.download() # to load exr files
+
 def load_image(path: str) -> torch.Tensor:
     # img = Image.open(path)
     # img = img.convert('RGB')

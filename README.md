@@ -46,11 +46,6 @@ cd diffusionhandles
 pip install -e .[dev]
 ```
 
-Install freeimage binaries to allow load and writing exr images:
-```bash
-imageio_download_bin freeimage
-```
-
 ## Install as Web App (Experimental)
 
 Follow the steps to install for development, replacing the following step to use the `webapp` extras instead of `dev` extras:

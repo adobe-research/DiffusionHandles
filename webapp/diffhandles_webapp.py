@@ -85,12 +85,12 @@ class DiffhandlesWebapp:
         with gr.Blocks() as gr_app:
             with gr.Row():
                 with gr.Column():
-                    gr_text_prompt = gr.Textbox(label="Text Prompt")
-                    gr_input_image = gr.Image(label="Input Image")
-                    gt_fg_mask = gr.Image(label="Foreground Mask")
-                    gt_depth = HDRImage(label="Depth")
+                    gr_text_prompt = gr.Textbox(label="Text Prompt", value="a sunflower in the garden")
+                    gr_input_image = gr.Image(label="Input Image", value="data/sunflower/input.png")
+                    gt_fg_mask = gr.Image(label="Foreground Mask", value="data/sunflower/mask.png")
+                    gt_depth = HDRImage(label="Depth", value="data/sunflower/depth.exr")
                     gt_bg_depth = HDRImage(label="Background Depth")
-                    gr_rot_angle = gr.Slider(label="Rotation Angle", value=0.0, minimum=-180.0, maximum=180.0, step=1.0)
+                    gr_rot_angle = gr.Slider(label="Rotation Angle", value=40.0, minimum=-180.0, maximum=180.0, step=1.0)
                     gr_rot_axis_x = gr.Number(label="Rotation Axis X", value=0.0, minimum=-1.0, maximum=1.0)
                     gr_rot_axis_y = gr.Number(label="Rotation Axis Y", value=1.0, minimum=-1.0, maximum=1.0)
                     gr_rot_axis_z = gr.Number(label="Rotation Axis Z", value=0.0, minimum=-1.0, maximum=1.0)
@@ -155,4 +155,3 @@ if __name__ == '__main__':
 
     server = DiffhandlesWebapp(netpath=args.netpath, port=args.port, config_path=args.config_path, device=args.device)
     server.start()
-s
