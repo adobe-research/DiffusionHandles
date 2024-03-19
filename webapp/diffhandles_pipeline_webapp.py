@@ -14,6 +14,9 @@ import uvicorn
 import gradio_client
 import imageio
 
+# Example usage:
+# python diffhandles_pipeline_webapp.py --port 8888 --netpath /g3i-demo/diffhandles-demo/dh --lama_inpainter_url http://localhost:8891/g3i-demo/diffhandles-demo/lama_inpainter --zoe_depth_url http://localhost:8890/g3i-demo/diffhandles-demo/zoe_depth --diffhandles_url http://localhost:8889/g3i-demo/diffhandles-demo/diffhandles
+
 class DiffhandlesPipelineWebapp:
     def __init__(
             self, netpath: str, port: int, lama_inpainter_url: str, zoe_depth_url: str, diffhandles_url: str, timeout_seconds: float = None):
@@ -54,9 +57,13 @@ class DiffhandlesPipelineWebapp:
 
         # submit jobs to create the background and the foreground depth
         bg_job = self.lama_inpainter_client.submit(
-            gradio_client.file(img_path), gradio_client.file(fg_mask_path), fg_mask_dilation)
+            # gradio_client.file(img_path), gradio_client.file(fg_mask_path), # for gradio version >= 4.21
+            img_path, fg_mask_path,
+            fg_mask_dilation)
         depth_job = self.zoe_depth_client.submit(
-            gradio_client.file(img_path))
+            # gradio_client.file(img_path) # for gradio version >= 4.21
+            img_path
+            )
         job_time = 0
         bg_depth_job = None
         while not (bg_job.done() and depth_job.done()):
@@ -65,7 +72,9 @@ class DiffhandlesPipelineWebapp:
             if bg_job.done():
                 bg_path = bg_job.outputs()[0]
                 bg_depth_job = self.zoe_depth_client.submit(
-                    gradio_client.file(bg_path))
+                    # gradio_client.file(bg_path) # for gradio version >= 4.21
+                    bg_path
+                    )
 
             time.sleep(0.1)
             job_time += 0.1
@@ -80,7 +89,9 @@ class DiffhandlesPipelineWebapp:
         if bg_depth_job is None:
             bg_path = bg_job.outputs()[0]
             bg_depth_job = self.zoe_depth_client.submit(
-                gradio_client.file(bg_path))
+                # gradio_client.file(bg_path) # for gradio version >= 4.21
+                bg_path
+                )
         while not (bg_depth_job.done()):
             time.sleep(0.1)
             job_time += 0.1
@@ -91,7 +102,9 @@ class DiffhandlesPipelineWebapp:
         bg_depth_path = bg_depth_job.outputs()[0]
 
         edited_image_job = self.diffhandles_client.submit(
-            prompt, gradio_client.file(img_path), gradio_client.file(fg_mask_path), gradio_client.file(depth_path), gradio_client.file(bg_depth_path),
+            prompt,
+            # gradio_client.file(img_path), gradio_client.file(fg_mask_path), gradio_client.file(depth_path), gradio_client.file(bg_depth_path), # for gradio version >= 4.21
+            img_path, fg_mask_path, depth_path, bg_depth_path,
             rot_angle, rot_axis_x, rot_axis_y, rot_axis_z,
             trans_x, trans_y, trans_z)
 

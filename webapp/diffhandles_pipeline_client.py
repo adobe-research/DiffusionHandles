@@ -16,11 +16,12 @@ class DiffhandlesPipelineClient():
             fg_mask_dilation: int = 3):
         
         job = self.client.submit(
-            prompt, gradio_client.file(img_path), gradio_client.file(fg_mask_path),
+            prompt,
+            # gradio_client.file(img_path), gradio_client.file(fg_mask_path), # for gradio version >= 4.21
+            img_path, fg_mask_path,
             rot_angle, rot_axis[0], rot_axis[1], rot_axis[2],
             translation[0], translation[1], translation[2],
             fg_mask_dilation)
-            # api_name="/predict")
         
         job_time = 0
         while not job.done():

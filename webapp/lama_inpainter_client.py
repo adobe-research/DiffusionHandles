@@ -10,7 +10,10 @@ class LamaInpainterClient():
 
     def remove_foreground(self, img_path: str, fg_mask_path: str, dilation: int = 3):
         
-        job = self.client.submit(gradio_client.file(img_path), gradio_client.file(fg_mask_path), dilation)
+        job = self.client.submit(
+            # gradio_client.file(img_path), gradio_client.file(fg_mask_path), # for gradio version >= 4.21
+            img_path, fg_mask_path,
+            dilation)
         
         job_time = 0
         while not job.done():

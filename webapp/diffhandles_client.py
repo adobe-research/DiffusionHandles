@@ -15,10 +15,11 @@ class DiffhandlesClient():
             translation: Tuple[float, float, float] = (0.0, 0.0, 0.0)):
         
         job = self.client.submit(
-            prompt, gradio_client.file(img_path), gradio_client.file(fg_mask_path), gradio_client.file(depth_path), gradio_client.file(bg_depth_path),
+            prompt,
+            # gradio_client.file(img_path), gradio_client.file(fg_mask_path), gradio_client.file(depth_path), gradio_client.file(bg_depth_path), # for gradio version >= 4.21
+            img_path, fg_mask_path, depth_path, bg_depth_path,
             rot_angle, rot_axis[0], rot_axis[1], rot_axis[2],
             translation[0], translation[1], translation[2])
-            # api_name="/predict")
         
         job_time = 0
         while not job.done():
