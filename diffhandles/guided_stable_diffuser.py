@@ -174,8 +174,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
         activation3_list = []
         
         # obj_number = 2
-        timestep_num = 0
-        for index, t in enumerate(tqdm(timesteps)):
+        for t_idx, t in enumerate(tqdm(timesteps)):
             with torch.no_grad():
 
                 #Prepare latent variables
@@ -217,7 +216,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                     latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
 
 
-                text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
+                text_embeddings = torch.cat([uncond_embeddings[t_idx].expand(*cond_embeddings.shape), cond_embeddings])
 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -238,14 +237,13 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]     
                 torch.cuda.empty_cache()
-                timestep_num += 1
         
         return activation_list, activation2_list, activation3_list, latents
 
     def guided_inference(
             self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
             activations_orig: torch.Tensor, activations2_orig: torch.Tensor, activations3_orig: torch.Tensor,
-            correspondences: torch.Tensor):
+            correspondences: torch.Tensor, save_intermediate_steps=False):
 
         processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
         
@@ -272,21 +270,28 @@ class GuidedStableDiffuser(GuidedDiffuser):
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
         loss = torch.tensor(10000)
-        timestep_num = 0
+        # timestep_num = 0
         
-        obj_number = 2
+        if save_intermediate_steps:
+            intermediate_images = {
+                'opt': [],
+                'post-opt': [],
+            }
         
-        for index, t in enumerate(tqdm(timesteps)):
+        for t_idx, t in enumerate(tqdm(timesteps)):
             iteration = 0
             # attention_map_orig = attention_maps_orig[timestep_num]
-            activation_orig = activations_orig[timestep_num]
-            activation2_orig = activations2_orig[timestep_num]
-            activation3_orig = activations3_orig[timestep_num]
+            activation_orig = activations_orig[t_idx]
+            activation2_orig = activations2_orig[t_idx]
+            activation3_orig = activations3_orig[t_idx]
             torch.set_grad_enabled(True)
 
             activations_size = (activation3_orig.shape[-2], activation3_orig.shape[-1])
+
+            if save_intermediate_steps:
+                intermediate_images['opt'].append([])
                         
-            while iteration < 3 and (index < 38 and index >= 0):
+            while iteration < 3 and (t_idx < 38 and t_idx >= 0):
                 
                 latent_model_input = latents
                 latents = latents.requires_grad_(True)
@@ -312,80 +317,76 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 activations2 = unet_output[5]
                 activations3 = unet_output[6]
 
-                loss = 0
+                # loss = 0
                 
-                for m in range(obj_number):
-                    # attention_maps = retrieve_attention_maps(attn_map_integrated_down, attn_map_integrated_mid, attn_map_integrated_up, m, object_positions, latents.shape[2])
-                    # attention_map_obj_orig = attention_map_orig[m]                
-                    if(m == 0):
-                        if(timestep_num >= 0):
-                            appearance_loss = 0.0
-                            bg_loss = 0.0
-                            if(timestep_num % 3 == 0):
-                                appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
-                                    activations=activations3[0], activations_orig=activation3_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
-                                bg_loss += 1.5 * compute_background_loss(
-                                    activations=activations3[0],
-                                    activations_orig=activation3_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
+                if(t_idx >= 0):
+                    appearance_loss = 0.0
+                    bg_loss = 0.0
+                    if(t_idx % 3 == 0):
+                        appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
+                            activations=activations3[0], activations_orig=activation3_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
+                        bg_loss += 1.5 * compute_background_loss(
+                            activations=activations3[0],
+                            activations_orig=activation3_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
 
-                            if(timestep_num % 3 == 1):
-                                appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
-                                    activations=activations2[0], activations_orig=activation2_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
-                                bg_loss += 1.5 * compute_background_loss(
-                                    activations=activations2[0], activations_orig=activation2_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
+                    if(t_idx % 3 == 1):
+                        appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
+                            activations=activations2[0], activations_orig=activation2_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
+                        bg_loss += 1.5 * compute_background_loss(
+                            activations=activations2[0], activations_orig=activation2_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
 
-                            if(timestep_num % 3 == 2):
-                                appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
-                                    activations=activations2[0], activations_orig=activation2_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
-                                appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
-                                    activations=activations3[0], activations_orig=activation3_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
-                                bg_loss += 1.5 * compute_background_loss(
-                                    activations=activations3[0], activations_orig=activation3_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
-                                bg_loss += 1.5 * compute_background_loss(
-                                    activations=activations2[0], activations_orig=activation2_orig,
-                                    processed_correspondences=processed_correspondences,
-                                    attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
-                        else:
-                            appearance_loss = 0.1 * compute_localized_transformed_appearance_loss(
-                                activations=activations3[0], activations_orig=activation3_orig,
-                                attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
+                    if(t_idx % 3 == 2):
+                        appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
+                            activations=activations2[0], activations_orig=activation2_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
+                        appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
+                            activations=activations3[0], activations_orig=activation3_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
+                        bg_loss += 1.5 * compute_background_loss(
+                            activations=activations3[0], activations_orig=activation3_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
+                        bg_loss += 1.5 * compute_background_loss(
+                            activations=activations2[0], activations_orig=activation2_orig,
+                            processed_correspondences=processed_correspondences,
+                            attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
+                else:
+                    appearance_loss = 0.1 * compute_localized_transformed_appearance_loss(
+                        activations=activations3[0], activations_orig=activation3_orig,
+                        attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
 
-                        if(iteration == 0):
-                            app_wt = 2.5
-                            bg_wt = 1.25
-                        if(iteration == 1):
-                            app_wt = 1.25
-                            bg_wt = 2.5   
-                        if(iteration == 2):
-                            app_wt = 1.25
-                            bg_wt = 1.25
-                        if(iteration == 3):
-                            app_wt = 2.5
-                            bg_wt = 2.5
+                if(iteration == 0):
+                    app_wt = 2.5
+                    bg_wt = 1.25
+                if(iteration == 1):
+                    app_wt = 1.25
+                    bg_wt = 2.5   
+                if(iteration == 2):
+                    app_wt = 1.25
+                    bg_wt = 1.25
+                if(iteration == 3):
+                    app_wt = 2.5
+                    bg_wt = 2.5
 
-                        # print('bg loss')
-                        # print(bg_loss)
+                # print('bg loss')
+                # print(bg_loss)
 
-                        # print('appearance loss')
-                        # print(appearance_loss)
+                # print('appearance loss')
+                # print(appearance_loss)
 
-                        loss += self.conf.fg_weight*app_wt*appearance_loss + self.conf.bg_weight*bg_wt*bg_loss
+                loss = 30.0 * (self.conf.fg_weight*app_wt*appearance_loss + self.conf.bg_weight*bg_wt*bg_loss)
 
-                loss *= 30
+                # loss *= 30
 
                 if(loss == 0):
                     grad_cond = 0
@@ -395,7 +396,13 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 var = 0.1 
                 latents = latents - 1.0 * grad_cond * var
                 iteration += 1
-                torch.cuda.empty_cache() 
+                torch.cuda.empty_cache()
+
+                if save_intermediate_steps:
+                    with torch.no_grad():
+                        image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
+                        image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+                        intermediate_images['opt'][-1].append(image.detach().cpu())
                 
             torch.set_grad_enabled(False)            
             with torch.no_grad():
@@ -405,7 +412,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 if self.conf.use_depth:
                     latent_model_input = torch.cat([latent_model_input, torch.cat([depth]*2, dim=0)], dim=1)
 
-                text_embeddings = torch.cat([uncond_embeddings[index].expand(*cond_embeddings.shape), cond_embeddings])
+                text_embeddings = torch.cat([uncond_embeddings[t_idx].expand(*cond_embeddings.shape), cond_embeddings])
 
                 # predict the noise residual
                 unet_output = self.unet(
@@ -424,12 +431,21 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 # compute the previous noisy sample x_t -> x_t-1
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
                 torch.cuda.empty_cache()
-            timestep_num += 1
+
+                if save_intermediate_steps:
+                    image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
+                    image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+                    intermediate_images['post-opt'].append(image.detach().cpu())
+            # timestep_num += 1
                     
         with torch.no_grad():
             image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
             image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-        return image
+        
+        if save_intermediate_steps:
+            return image, intermediate_images
+        else:
+            return image
 
     def process_correspondences(self, correspondences, img_res):
 

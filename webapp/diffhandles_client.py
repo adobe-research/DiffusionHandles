@@ -46,6 +46,6 @@ if __name__ == '__main__':
     )
     import os
     import shutil
-    os.makedirs('results/webapp/sunflower', exist_ok=True)
-    shutil.copyfile(edited_image_path, "results/webapp/sunflower/edit_test.png")
+    os.makedirs('results/sunflower', exist_ok=True)
+    shutil.copyfile(edited_image_path, "results/sunflower/edit_test.png")
     print('done')

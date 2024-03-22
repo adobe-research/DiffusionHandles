@@ -61,7 +61,7 @@ class LamaInpainterWebapp:
             with gr.Row():
                 with gr.Column():
                     gr_input_image = gr.Image(label="Input Image")
-                    gt_fg_mask = gr.Image(label="Foreground Mask")
+                    gr_fg_mask = gr.Image(label="Foreground Mask")
                     gr_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=3, minimum=0, maximum=100)
                     generate_button = gr.Button("Submit")
                 with gr.Column():
@@ -69,7 +69,7 @@ class LamaInpainterWebapp:
 
             generate_button.click(
                 self.run_lama_inpainter,
-                inputs=[gr_input_image, gt_fg_mask, gr_dilation],
+                inputs=[gr_input_image, gr_fg_mask, gr_dilation],
                 outputs=[gr_bg])
 
         return gr_app
@@ -85,7 +85,6 @@ class LamaInpainterWebapp:
         try:
             uvicorn.run(app, host="0.0.0.0", port=self.port)
         except KeyboardInterrupt:
-            del self.diff_handles
             sys.exit()
 
 def parse_args():

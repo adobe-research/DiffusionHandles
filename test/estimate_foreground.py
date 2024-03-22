@@ -36,7 +36,7 @@ def estimate_foreground(input_image_paths, foreground_prompt_paths, output_paths
         masks, boxes, prompts, logits = segmenter.predict(
             image_pil=torchvision.transforms.functional.to_pil_image(img[0]),
             text_prompt=fg_prompt)
-        del segmenter
+        # del segmenter
         fg_mask = masks[0, None, None, :, :].to(device=device, dtype=torch.float32)
         
         save_image(fg_mask[0], output_path)

@@ -34,6 +34,6 @@ if __name__ == '__main__':
     )
     import os
     import shutil
-    os.makedirs('results/webapp/sunflower', exist_ok=True)
-    shutil.copyfile(bg_path, "results/webapp/sunflower/bg.png")
+    os.makedirs('results/sunflower', exist_ok=True)
+    shutil.copyfile(bg_path, "results/sunflower/bg.png")
     print('done')

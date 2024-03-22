@@ -25,9 +25,17 @@ def normalize_depth(depth, bounds=None, return_bounds=False):
 def transform_depth(
         pts: torch.Tensor, bg_pts: torch.Tensor, fg_mask: torch.Tensor,
         intrinsics: torch.Tensor, img_res: int,
-        rot_angle: float, rot_axis: torch.Tensor, translation: torch.Tensor,
+        rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
         depth_bounds: Tuple[float, float] = None):
 
+    # default transformation parameters
+    if rot_angle is None:
+        rot_angle = 0.0
+    if rot_axis is None:
+        rot_axis = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=pts.device)
+    if translation is None:
+        translation = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device=pts.device)
+    
     device = fg_mask.device
     
     pts, mod_ids = transform_point_cloud(

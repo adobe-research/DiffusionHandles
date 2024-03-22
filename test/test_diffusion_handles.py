@@ -14,8 +14,11 @@ from generate_results_webpage import generate_results_webpage
 from utils import crop_and_resize, load_image, load_depth, save_image
 
 
-def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, skip_existing=False, config_path=None):
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, skip_existing:bool = False, config_path:str = None, device:str = None):
+    if device is None:
+        device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+    else:
+        device = torch.device(device)
 
     # # TEMP!
     # # need to:
@@ -159,9 +162,9 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
             transform = transforms[transform_name]
 
             # get transformation parameters
-            translation = torch.tensor(transform['translation'], dtype=torch.float32)
-            rot_axis = torch.tensor(transform['rotation_axis'], dtype=torch.float32)
-            rot_angle = float(transform['rotation_angle'])
+            translation = torch.tensor(transform['translation'], dtype=torch.float32) if 'translation' in transform else None
+            rot_axis = torch.tensor(transform['rotation_axis'], dtype=torch.float32) if 'rotation_axis' in transform else None
+            rot_angle = float(transform['rotation_angle']) if 'rotation_angle' in transform else None
 
             # transform the foreground object
             edited_img, raw_edited_depth, edited_disparity = diff_handles.transform_foreground(
@@ -218,10 +221,11 @@ def parse_args():
     parser.add_argument('--output_dir', type=str, default='results/photogen')
     parser.add_argument('--skip_existing', action='store_true')
     parser.add_argument('--config_path', type=str, default=None)
+    parser.add_argument('--device', type=str, default=None)
     return parser.parse_args()
 
 if __name__ == '__main__':
     args = parse_args()
 
-    test_diffusion_handles(test_set_path=args.test_set_path, input_dir=args.input_dir, output_dir=args.output_dir, skip_existing=args.skip_existing, config_path=args.config_path)
+    test_diffusion_handles(test_set_path=args.test_set_path, input_dir=args.input_dir, output_dir=args.output_dir, skip_existing=args.skip_existing, config_path=args.config_path, device=args.device)
     generate_results_webpage(test_set_path=join(args.output_dir, basename(args.test_set_path)), website_path=join(args.output_dir, 'summary.html'), relative_image_dir='.')

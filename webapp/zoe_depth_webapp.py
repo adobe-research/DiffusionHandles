@@ -77,7 +77,6 @@ class ZoeDepthWebapp:
         try:
             uvicorn.run(app, host="0.0.0.0", port=self.port)
         except KeyboardInterrupt:
-            del self.diff_handles
             sys.exit()
 
 def parse_args():

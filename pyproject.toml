@@ -45,4 +45,4 @@ gradio_hdrimage = { version = "*", optional = true } # for the web app
 
 [tool.poetry.extras]
 dev = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib", "imageio"]
-webapp = ["zoedepth", "saicinpainting", "gradio", "fastapi", "uvicorn", "gradio_hdrimage"]
+webapp = ["zoedepth", "saicinpainting", "lang-sam", "gradio", "fastapi", "uvicorn", "gradio_hdrimage"]
