@@ -18,6 +18,11 @@ class LangSAMSegmenterWebapp:
         self.port = port
         self.img_res = 512
 
+        if device != 'cuda:0':
+            # LangSAM currently returns empty tensors on other devices
+            # (Probably some hard-coded device somewhere in their code?)
+            raise RuntimeError("Currently only 'cuda:0' is supported as device.")
+
         self.segmenter = LangSAM()
         self.segmenter.sam.model.to(device)
         self.segmenter.device = device
@@ -35,10 +40,21 @@ class LangSAMSegmenterWebapp:
         # prepare inputs (convert to torch tensors, crop, resize)
         img = torch.from_numpy(img).to(device=self.segmenter.device, dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
         img = crop_and_resize(img=img, size=self.img_res)
-
+        
+        # print(prompt)
+        # print(img.shape)
+        # print(img.max())
+        # print(img.min())
+        # print(img.dtype)
+        
+        # TODO: this currently only works on 'cuda:0', on other devices the output is an empty tensor
         masks, boxes, prompts, logits = self.segmenter.predict(
             image_pil=torchvision.transforms.functional.to_pil_image(img[0]),
             text_prompt=prompt)
+        print(masks.shape)
+        print(boxes)
+        print(prompts)
+        print(logits)
         mask = masks[[0, 0, 0], :, :].to(device=self.segmenter.device, dtype=torch.float32)
 
         print(mask.shape)

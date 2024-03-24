@@ -6,7 +6,7 @@ from omegaconf import OmegaConf
 
 from diffhandles.stable_null_inverter import StableNullInverter
 from diffhandles.guided_stable_diffuser import GuidedStableDiffuser
-from diffhandles.depth_transform import transform_depth, depth_to_points, normalize_depth
+from diffhandles.depth_transform import transform_depth
 from diffhandles.utils import solve_laplacian_depth
 
 
@@ -57,19 +57,15 @@ class DiffusionHandles:
             scipy.ndimage.binary_dilation(fg_mask[0, 0].cpu().numpy(), iterations=15))
         bg_depth = torch.from_numpy(bg_depth).to(device=self.device)[None, None]
 
-        bg_pts = depth_to_points(bg_depth, intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res))
-        pts = depth_to_points(depth, intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res))
-
         # 3d-transform depth
         # TODO: this should work on and return unnormalized depth instead of normalized disparity
         disparity, target_mask, correspondences, raw_edited_depth = transform_depth(
-            pts=pts, bg_pts=bg_pts, fg_mask=fg_mask,
-            intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res).to(device=pts.device),
-            img_res=self.img_res,
+            depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
+            intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res).to(device=depth.device),
             rot_angle=0,
             rot_axis=torch.tensor([0.0, 1.0, 0.0]).to(self.device),
             translation=torch.tensor([0.0, 0.0, 0.0]).to(self.device),
-            depth_bounds=None)
+            use_input_depth_normalization=False)
 
         # invert image to get noise and null text that can be used to reproduce the image
         _, inverted_noise, inverted_null_text = self.inverter.invert(
@@ -91,9 +87,9 @@ class DiffusionHandles:
             rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
             use_input_depth_normalization=False):
         """
-        Move the foreground object. The following steps are performed:
-        1) The depth of the foreground object and the intermediate features are 3D-transformed
-        2) The edited image is generated guided by the 3D-transformed intermediate features
+        Transform the foreground object. The following steps are performed:
+        1) The depth of the foreground object is 3D-transformed, giving us a an updated depth map and corresondences between old and new 2D image coordinates.
+        2) The edited image is generated guided by intermediate features that are warped with the correspondences from the 3D transformation.
 
         Args:
             depth: Depth of the input image.
@@ -114,26 +110,12 @@ class DiffusionHandles:
             output_img: The edited image.
         """
         
-        # get point clouds from depths
-        bg_pts = depth_to_points(bg_depth, intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res))
-        pts = depth_to_points(depth, intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res))
-
-        # get normalized disparity
-        # TODO: depth should be converted to disparity and normalized in the diffuser, not here
-        #       (since requiring dispairt and the normalization is specific to the depth-to-image diffuser)
-        if use_input_depth_normalization:
-            depth, depth_bounds = normalize_depth(1.0/depth, return_bounds=True)
-        
         # 3d-transform depth
-        # TODO: this should work on and return unnormalized depth instead of normalized disparity
         edited_disparity, target_mask, correspondences, raw_edited_depth = transform_depth(
-            pts=pts, bg_pts=bg_pts, fg_mask=fg_mask,
-            intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res).to(device=pts.device),
-            img_res=self.img_res,
-            rot_angle=rot_angle,
-            rot_axis=rot_axis,
-            translation=translation,
-            depth_bounds=depth_bounds if use_input_depth_normalization else None)
+            depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
+            intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res),
+            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
+            use_input_depth_normalization=use_input_depth_normalization)
 
         if edited_disparity.shape[-2:] != (self.img_res, self.img_res):
             raise ValueError(f"Transformed depth must be of size {self.img_res}x{self.img_res}.")

@@ -23,10 +23,9 @@ def normalize_depth(depth, bounds=None, return_bounds=False):
         return 255 * (depth - min_depth) / (max_depth - min_depth)
 
 def transform_depth(
-        pts: torch.Tensor, bg_pts: torch.Tensor, fg_mask: torch.Tensor,
-        intrinsics: torch.Tensor, img_res: int,
+        depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
         rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
-        depth_bounds: Tuple[float, float] = None):
+        use_input_depth_normalization = False):
 
     # default transformation parameters
     if rot_angle is None:
@@ -35,8 +34,15 @@ def transform_depth(
         rot_axis = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=pts.device)
     if translation is None:
         translation = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device=pts.device)
-    
+
+    bg_pts = depth_to_points(bg_depth, intrinsics=intrinsics)
+    pts = depth_to_points(depth, intrinsics=intrinsics)
+
     device = fg_mask.device
+    
+    if fg_mask.shape[-2] != fg_mask.shape[-1]:
+        raise RuntimeError(f'Expected fg_mask to be square, got shape {fg_mask.shape[-2]} x {fg_mask.shape[-1]}.')
+    img_res = fg_mask.shape[-1]
     
     pts, mod_ids = transform_point_cloud(
         points=pts.cpu().numpy(),
@@ -84,6 +90,12 @@ def transform_depth(
     direct_depth = rendered_depth
 
     # get normalized disparity
+    # TODO: depth should be converted to disparity and normalized in the diffuser, not here
+    #       (since requiring disparity and the normalization is specific to the depth-to-image diffuser)
+    if use_input_depth_normalization:
+        _, depth_bounds = normalize_depth(1.0/depth, return_bounds=True)
+    else:
+        depth_bounds = None
     rendered_depth = normalize_depth(1.0/rendered_depth, bounds=depth_bounds)
     
     rendered_depth = rendered_depth[0, 0, ...].cpu().numpy()
