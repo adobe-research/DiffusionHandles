@@ -67,7 +67,7 @@ class DiffhandlesWebapp:
         (bg_depth, inverted_null_text, inverted_noise, activations, activations2, activations3, latent_image
          ) = self.diff_handles.set_foreground(
             img, depth, prompt, fg_mask, bg_depth)
-        (edited_img, raw_edited_depth, edited_disparity
+        (edited_img, edited_disparity
          ) = self.diff_handles.transform_foreground(
             depth=depth, prompt=prompt,
             fg_mask=fg_mask, bg_depth=bg_depth,

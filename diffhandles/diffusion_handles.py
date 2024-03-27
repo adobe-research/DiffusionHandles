@@ -22,8 +22,6 @@ class DiffusionHandles:
         self.diffuser = GuidedStableDiffuser(conf=self.conf.guided_diffuser)
         self.inverter = StableNullInverter(self.diffuser)
 
-        self.img_res = 512
-
         self.device = torch.device('cpu')
 
     def to(self, device: torch.device = None):
@@ -59,13 +57,14 @@ class DiffusionHandles:
 
         # 3d-transform depth
         # TODO: this should work on and return unnormalized depth instead of normalized disparity
-        disparity, target_mask, correspondences, raw_edited_depth = transform_depth(
-            depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
-            intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res).to(device=depth.device),
-            rot_angle=0,
-            rot_axis=torch.tensor([0.0, 1.0, 0.0]).to(self.device),
-            translation=torch.tensor([0.0, 0.0, 0.0]).to(self.device),
-            use_input_depth_normalization=False)
+        with torch.no_grad():
+            disparity, correspondences = transform_depth(
+                depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
+                intrinsics=self.diffuser.get_depth_intrinsics(device=depth.device),
+                rot_angle=0,
+                rot_axis=torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=self.device),
+                translation=torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device=self.device),
+                use_input_depth_normalization=False)
 
         # invert image to get noise and null text that can be used to reproduce the image
         _, inverted_noise, inverted_null_text = self.inverter.invert(
@@ -111,14 +110,15 @@ class DiffusionHandles:
         """
         
         # 3d-transform depth
-        edited_disparity, target_mask, correspondences, raw_edited_depth = transform_depth(
-            depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
-            intrinsics=self.diffuser.get_depth_intrinsics(h=self.img_res, w=self.img_res),
-            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
-            use_input_depth_normalization=use_input_depth_normalization)
+        with torch.no_grad():
+            edited_disparity, correspondences = transform_depth(
+                depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
+                intrinsics=self.diffuser.get_depth_intrinsics(device=depth.device),
+                rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
+                use_input_depth_normalization=use_input_depth_normalization)
 
-        if edited_disparity.shape[-2:] != (self.img_res, self.img_res):
-            raise ValueError(f"Transformed depth must be of size {self.img_res}x{self.img_res}.")
+            # if edited_disparity.shape[-2:] != (self.img_res, self.img_res):
+            #     raise ValueError(f"Transformed depth must be of size {self.img_res}x{self.img_res}.")
 
         # perform second diffusion inference pass guided by the 3d-transformed features
         with torch.no_grad():
@@ -128,4 +128,4 @@ class DiffusionHandles:
                 activations_orig=activations, activations2_orig=activations2, activations3_orig=activations3,
                 correspondences=correspondences)
 
-        return output_img, raw_edited_depth, edited_disparity
+        return output_img, edited_disparity

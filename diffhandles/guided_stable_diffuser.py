@@ -122,24 +122,30 @@ class GuidedStableDiffuser(GuidedDiffuser):
         return depth
 
     @staticmethod
-    def get_depth_intrinsics(h: int, w: int):
+    def get_depth_intrinsics(device: torch.device = None):
         """
         Return intrinsics suitable for the input depth.
         Intrinsics for a pinhole camera model.
-        Assume fov of 55 degrees and central principal point.
+        Assume fov of 55 degrees, a central principal point,
+        and that the output coordinates on the image plane for the 55° fov  are in [-1, 1]^2
         """
-        f = 0.5 * w / np.tan(0.5 * 6.24 * np.pi / 180.0) #car benchmark
-        #f = 0.5 * W / np.tan(0.5 * 7.18 * np.pi / 180.0) #airplane benchmark
-        #f = 0.5 * W / np.tan(0.5 * 14.9 * np.pi / 180.0) #chair, cup, lamp, stool benchmark        
-        #f = 0.5 * W / np.tan(0.5 * 7.23 * np.pi / 180.0) #plant benchmark            
-        f = 0.5 * w / np.tan(0.5 * 55 * np.pi / 180.0)    
-        cx = 0.5 * w
-        cy = 0.5 * h
+        # # f = 0.5 * w / np.tan(0.5 * 6.24 * np.pi / 180.0) #car benchmark
+        # #f = 0.5 * W / np.tan(0.5 * 7.18 * np.pi / 180.0) #airplane benchmark
+        # #f = 0.5 * W / np.tan(0.5 * 14.9 * np.pi / 180.0) #chair, cup, lamp, stool benchmark        
+        # #f = 0.5 * W / np.tan(0.5 * 7.23 * np.pi / 180.0) #plant benchmark            
+        # f = 0.5 * w / np.tan(0.5 * 55 * np.pi / 180.0)
+        # cx = 0.5 * w
+        # cy = 0.5 * h
+
+        fov = 55.0
+        f = 1.0 / np.tan(0.5 * fov * (np.pi / 180.0))
+        cx = 0.0
+        cy = 0.0
         return torch.tensor([
             [f, 0, cx],
             [0, f, cy],
             [0, 0, 1]
-            ])
+            ], dtype=torch.float32, device=device)
 
     def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str): #, phrases: List[str]):
 

@@ -11,7 +11,7 @@ class GuidedDiffuser:
         raise NotImplementedError
 
     @staticmethod
-    def get_depth_intrinsics(h: int, w: int):
+    def get_depth_intrinsics(device: torch.device = None):
         """
         Return intrinsics suitable for the input depth.
         """

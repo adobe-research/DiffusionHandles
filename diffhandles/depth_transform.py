@@ -1,3 +1,5 @@
+import os
+os.environ['PYOPENGL_PLATFORM'] = 'egl'
 from typing import Tuple
 
 import torch
@@ -6,6 +8,9 @@ import cv2
 import scipy.sparse
 
 from diffhandles.utils import pack_correspondences
+from diffhandles.mesh import Mesh
+from diffhandles.renderer import Camera
+from diffhandles.pytorch3d_renderer import PyTorch3DRenderer, PyTorch3DRendererArgs
 
 def normalize_depth(depth, bounds=None, return_bounds=False):
     if depth.dim() != 4:
@@ -22,6 +27,137 @@ def normalize_depth(depth, bounds=None, return_bounds=False):
     else:
         return 255 * (depth - min_depth) / (max_depth - min_depth)
 
+def depth_to_mesh(depth: torch.Tensor, intrinsics: torch.Tensor, extrinsics_R: torch.Tensor = None, extrinsics_t: torch.Tensor = None, mask: torch.Tensor = None):
+   
+    if mask is not None:
+        mask = mask.view(mask.shape[-2], mask.shape[-1])
+    
+    # create vertices by getting world position for each pixel of the depth map that is inside the mask
+    verts = depth_to_world_coords(depth, intrinsics=intrinsics, extrinsics_R=extrinsics_R, extrinsics_t=extrinsics_t)
+    if mask is not None:
+        verts = verts[mask]
+    verts = verts.view(-1, 3).contiguous()
+
+    # get 2D coordinates in the depth image for each vertex
+    vert_img_coords = torch.stack(torch.meshgrid(
+        torch.linspace(0, 1, depth.shape[-2], device=depth.device),
+        torch.linspace(0, 1, depth.shape[-1], device=depth.device),
+        indexing='xy'), dim=-1)
+    if mask is not None:
+        vert_img_coords = vert_img_coords[mask]
+    vert_img_coords = vert_img_coords.view(-1, 2).contiguous()
+
+    # create faces as two counter-clockwise triangles for each square spanned by 4 adjacent pixels that are all inside the mask
+    # (upper left triangle, lower right triangle), assuming pixel index [0,0] is in the upper left corner
+    if mask is not None:
+        vertex_idx = torch.cumsum(mask.view(-1), dim=0).view(depth.shape[-2], depth.shape[-1])-1
+        vertex_idx[~mask] = -1
+    else:
+        vertex_idx = torch.arange(depth.shape[-2]*depth.shape[-1], device=depth.device, dtype=torch.int64).view(depth.shape[-2], depth.shape[-1])
+    tris_upper_left = torch.stack([x.reshape(-1) for x in [vertex_idx[1:, :-1], vertex_idx[:-1, 1:], vertex_idx[:-1, :-1]]], dim=-1)
+    tris_lower_right = torch.stack([x.reshape(-1) for x in [vertex_idx[1:, :-1], vertex_idx[1:, 1:], vertex_idx[:-1, 1:]]], dim=-1)
+    faces = torch.stack([tris_upper_left, tris_lower_right], dim=1).view(-1, 3)
+    faces = faces[faces.min(dim=-1).values >= 0]
+    faces = faces.contiguous()
+
+    mesh = Mesh(verts=verts, faces=faces)
+
+    # add vertex image coordinates and an indicator if a mask was given or not as color attribute (for rendering)
+    mesh.add_vert_attribute("color", torch.cat([
+        vert_img_coords,
+        torch.full_like(vert_img_coords[:, [0]], fill_value=0 if mask is None else 1)
+        ], dim=-1))
+
+    return mesh
+
+def transform_depth_new(
+        depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
+        rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
+        use_input_depth_normalization = False):
+
+    # default transformation parameters
+    if rot_angle is None:
+        rot_angle = 0.0
+    if rot_axis is None:
+        rot_axis = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=depth.device)
+    if translation is None:
+        translation = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device=depth.device)
+
+    rot_angle = torch.tensor(rot_angle, dtype=torch.float32, device=depth.device)
+
+    bg_depth_mesh = depth_to_mesh(depth=bg_depth, intrinsics=intrinsics)
+    fg_depth_mesh = depth_to_mesh(depth=depth, intrinsics=intrinsics, mask=fg_mask[0, 0]>0.5)
+
+    verts = fg_depth_mesh.verts
+
+    # move centroid to origin to rotate about centroid
+    centroid = verts.mean(dim=0, keepdim=True)
+    verts = verts - centroid
+    
+    # Use Rodriguez rotation formula to rotate with axis and angle
+    rot_axis = rot_axis / torch.linalg.norm(rot_axis, ord=2)
+    rot_angle = rot_angle * (torch.pi / 180.0)
+    cos_theta = torch.cos(rot_angle)
+    sin_theta = torch.sin(rot_angle)
+    term1 = verts * cos_theta
+    term2 = torch.cross(rot_axis[None, ...], verts) * sin_theta
+    term3 = rot_axis * torch.sum(verts * rot_axis[None, ...], dim=-1, keepdim=True) * (1 - cos_theta)
+    verts = term1 + term2 + term3
+
+    # move centroid back to original position and add translation
+    verts = verts + centroid + translation[None, ...]
+
+    fg_depth_mesh.verts.copy_(verts)
+
+    camera = Camera(intrinsics=intrinsics)
+
+    renderer = PyTorch3DRenderer(
+        output_names=['world_position', 'flat_vertex_color'],
+        args=PyTorch3DRendererArgs(
+            device=depth.device,
+            output_res=(depth.shape[-2], depth.shape[-1]),
+            cull_backfaces=True,
+            blur_radius=0.00001) # need a small blur radius otherwise the renderer may have artifacts if triangle edges align with pixel centers
+    )
+    renderer.update_scene(scene_elements={
+        'meshes': [bg_depth_mesh, fg_depth_mesh],
+        'cameras': [camera]})
+    rendered_outputs = renderer.render()
+
+    edited_depth = rendered_outputs['world_position'][None, ..., 2]
+    edited_src_img_coords = rendered_outputs['flat_vertex_color'][0, ..., :2]
+    edited_fg_mask = rendered_outputs['flat_vertex_color'][0, ..., 2] > 0.5
+
+    edited_img_coords = torch.stack(torch.meshgrid(
+        torch.linspace(0, 1, edited_depth.shape[-2], device=edited_depth.device),
+        torch.linspace(0, 1, edited_depth.shape[-1], device=edited_depth.device),
+        indexing='xy'), dim=-1)
+
+    edited_src_img_coords = edited_src_img_coords * torch.tensor([[depth.shape[-1]-1, depth.shape[-2]-1]], device=depth.device, dtype=torch.float32)
+    edited_img_coords = edited_img_coords * torch.tensor([[edited_depth.shape[-1]-1, edited_depth.shape[-2]-1]], device=edited_depth.device, dtype=torch.float32)
+
+    edited_src_img_coords = torch.round(edited_src_img_coords).to(dtype=torch.int64)
+    edited_img_coords = torch.round(edited_img_coords).to(dtype=torch.int64)
+
+    edited_src_img_coords = edited_src_img_coords[edited_fg_mask].to(device='cpu')
+    edited_img_coords = edited_img_coords[edited_fg_mask].to(device='cpu')
+    
+    correspondences = pack_correspondences(
+        edited_src_img_coords[:, 0],
+        edited_src_img_coords[:, 1],
+        edited_img_coords[:, 0],
+        edited_img_coords[:, 1])
+
+    # TODO: do this conversion from depth to disparity and the depth normalization later on (normalization probably in the diffuser)
+    if use_input_depth_normalization:
+        _, depth_bounds = normalize_depth(1.0/depth, return_bounds=True)
+    else:
+        depth_bounds = None
+    edited_disparity = normalize_depth(1.0/edited_depth, bounds=depth_bounds)
+
+    return edited_disparity, correspondences
+
+
 def transform_depth(
         depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
         rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
@@ -31,13 +167,13 @@ def transform_depth(
     if rot_angle is None:
         rot_angle = 0.0
     if rot_axis is None:
-        rot_axis = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=pts.device)
+        rot_axis = torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=depth.device)
     if translation is None:
-        translation = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device=pts.device)
+        translation = torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device=depth.device)
 
-    bg_pts = depth_to_points(bg_depth, intrinsics=intrinsics)
-    pts = depth_to_points(depth, intrinsics=intrinsics)
-
+    bg_pts = depth_to_world_coords(bg_depth, intrinsics=intrinsics)
+    pts = depth_to_world_coords(depth, intrinsics=intrinsics)
+    
     device = fg_mask.device
     
     if fg_mask.shape[-2] != fg_mask.shape[-1]:
@@ -63,6 +199,7 @@ def transform_depth(
     #reproject points to depth map
 
     reshaped_bg_pts = bg_pts.cpu().numpy().reshape((img_res**2, 3))
+    num_bg_pts = reshaped_bg_pts.shape[0]
 
     reshaped_pts = pts.reshape((img_res**2, 3))
 
@@ -72,12 +209,15 @@ def transform_depth(
 
     modded_id_list = np.where(mod_ids)[0]
 
-    idx_to_coord = {}
+    # idx_to_coord = {}
+    # for idx in modded_id_list:
+    #     pt = reshaped_pts[idx]
+    #     reshaped_bg_pts = np.vstack((reshaped_bg_pts, pt))
+    #     idx_to_coord[len(reshaped_bg_pts) - 1] = divmod(idx, img_res)
 
-    for idx in modded_id_list:
-        pt = reshaped_pts[idx]
-        reshaped_bg_pts = np.vstack((reshaped_bg_pts, pt))
-        idx_to_coord[len(reshaped_bg_pts) - 1] = divmod(idx, img_res)
+    modded_coords = np.stack([modded_id_list // img_res, modded_id_list % img_res], axis=-1)
+    idx_to_coord = {i+num_bg_pts: (modded_coords[i,0].item(), modded_coords[i,1].item()) for i in range(modded_coords.shape[0])}
+    reshaped_bg_pts = np.vstack([reshaped_bg_pts, reshaped_pts[modded_id_list]])
 
     (rendered_depth, target_mask, transformed_positions_x, transformed_positions_y, orig_visibility_mask) = points_to_depth(
         points=torch.from_numpy(reshaped_bg_pts).to(device=device),
@@ -228,7 +368,82 @@ def transform_depth(
     lap_inpainted_depth_map = torch.from_numpy(lap_inpainted_depth_map).to(device=device, dtype=torch.float32)[None, None]
     target_mask_cleaned = torch.from_numpy(target_mask_cleaned.astype(np.float32) / 255.0).to(device=device)[None, None]
 
-    return lap_inpainted_depth_map, target_mask_cleaned, correspondences, direct_depth
+    return lap_inpainted_depth_map, correspondences
+
+def transform_point_cloud2(points, axis, angle_degrees, x, y, z):
+    """
+    Rotate point cloud around the centroid of points selected by the mask.
+    
+    Parameters:
+    - points: numpy array of shape (512, 512, 3)
+    - axis: rotation axis, numpy array of shape (3,)
+    - angle_degrees: rotation angle in degrees
+    - mask: boolean array of shape (512, 512) indicating which pixels to consider for the centroid
+    
+    Returns:
+    - rotated_points: numpy array of shape (512, 512, 3)
+    """
+    # #cut_img = Image.open('car-cut.png')
+    # # cut_img = mask
+    # #cut_img = Image.open('cup-table-cut (2).png')    
+    # img_tensor = np.array(mask)
+    # ref_mask = (img_tensor[:, :] > 0.5)
+    # mask = np.zeros_like(ref_mask, dtype = np.uint8) 
+    # mask[ref_mask.nonzero()] = 255
+    # # mask = max_pool_numpy(mask, 512 // img_dim) # doesn't do anything as img_dim=512
+
+    # # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))  # Adjust the size as needed
+    # #mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+    # #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))  # Adjust the size as needed    
+    # #mask = cv2.erode(mask, kernel)
+    # #mask = cv2.dilate(mask, kernel)
+    
+    # #visualize_img(mask, 'curr_mask')
+    # mask = (mask[:,:] != 0)
+
+    # mask = mask.astype(bool)
+
+    # modified_indices = mask.flatten()  # Flattened version of the mask to match the reshaped points
+    
+    # Convert angle from degrees to radians
+    angle = np.radians(angle_degrees)
+    
+    # Ensure axis is a unit vector
+    axis = axis / np.linalg.norm(axis)
+    
+    # Compute the centroid of the masked points
+    masked_points = points
+
+    # trimesh_pc = trimesh.points.PointCloud(vertices=masked_points)
+    # trimesh_pc.export("point_cloud_obj.glb")
+
+
+    centroid = np.mean(masked_points, axis=0)
+    
+    # Translate points to place centroid at the origin
+    translated_points = points - centroid
+    
+    # Flatten the translated points
+    flattened_points = translated_points.reshape(-1, 3)
+    
+    # Use the Rodriguez rotation formula
+    cos_theta = np.cos(angle)
+    sin_theta = np.sin(angle)
+    
+    term1 = flattened_points * cos_theta
+    term2 = np.cross(axis, flattened_points) * sin_theta
+    term3 = axis * np.dot(flattened_points, axis)[:, np.newaxis] * (1 - cos_theta)
+    
+    rotated_points_flattened = term1 + term2 + term3
+
+    # trimesh_pc = trimesh.points.PointCloud(vertices=rotated_points_flattened + centroid + np.array([x,y,z]))
+    # trimesh_pc.export("modified_point_cloud_obj.glb")
+    
+    # Reshape the points back to 512x512x3 and translate back to the original position
+    rotated_points = rotated_points_flattened + centroid + np.array([x, y, z])#+ np.array([ 0.0, 0.0, -0.175]) #+ np.array([ 0.5, 0.15, 1.0])#+ np.array([0, 0, -0.1])#+ np.array([-0.035, 0.01, 0.15])
+    
+    return rotated_points
+
 
 def transform_point_cloud(points, axis, angle_degrees, x, y, z, mask):
     """
@@ -358,52 +573,59 @@ def poisson_solve(input_image, mask):
 
     return output_image
 
-def depth_to_points(depth: torch.Tensor, intrinsics: torch.Tensor, extrinsics_R: torch.Tensor = None, extrinsics_t: torch.Tensor = None):
+def depth_to_world_coords(depth: torch.Tensor, intrinsics: torch.Tensor, extrinsics_R: torch.Tensor = None, extrinsics_t: torch.Tensor = None):
 
-    device = depth.device
-    
     if depth.shape[0] != 1:
         raise ValueError("Only batch size 1 is supported")
 
-    depth = depth.squeeze(dim=0).cpu().numpy()
-    intrinsics = intrinsics.numpy()
-    intrinsics_inv = np.linalg.inv(intrinsics)
+    depth = depth.squeeze(dim=0)
+    intrinsics_inv = torch.linalg.inv(intrinsics)
     if extrinsics_R is None:
-        extrinsics_R = np.eye(3)
+        extrinsics_R = torch.eye(3, device=intrinsics.device, dtype=intrinsics.dtype)
     else:
-        extrinsics_R = extrinsics_R.cpu().numpy()
+        extrinsics_R = extrinsics_R
     if extrinsics_t is None:
-        extrinsics_t = np.zeros(3)
+        extrinsics_t = torch.zeros(3, device=intrinsics.device, dtype=intrinsics.dtype)
     else:
-        extrinsics_t = extrinsics_t.cpu().numpy()
+        extrinsics_t = extrinsics_t
 
     # M converts from your coordinate to PyTorch3D's coordinate system
-    M = np.eye(3)
+    M = torch.eye(3, device=intrinsics.device, dtype=intrinsics.dtype)
     M[0, 0] = -1.0
     M[1, 1] = -1.0
 
     height, width = depth.shape[1:3]
 
+    if height < 2 or width < 2:
+        raise RuntimeError(f'Expected depth to have at least 2 pixels in each dimension, got {height} x {width}.')
+    
     # print(height)
     # print(width)
 
-    x = np.arange(width)
-    y = np.arange(height)
-    coord = np.stack(np.meshgrid(x, y), -1)
-    coord = np.concatenate((coord, np.ones_like(coord)[:, :, [0]]), -1)  # z=1
-    coord = coord.astype(np.float32)
+    # normalize so image coordinates are in [-1, 1]^2
+    # since this coordinate range is mapped to inside the view frustum by the intrinsic matrix
+    # (assuming corner pixel centers are at located at corners or edges of the image plane)
+    normalized_width = (width-1)  / (max(width, height)-1)
+    normalized_height = (height-1)  / (max(width, height)-1)
+    x = torch.linspace(
+        -normalized_width, normalized_width,
+        steps=width, device=intrinsics.device, dtype=intrinsics.dtype)
+    y = torch.linspace(
+        -normalized_height, normalized_height,
+        steps=height, device=intrinsics.device, dtype=intrinsics.dtype)
+    coord = torch.stack(torch.meshgrid(x, y, indexing='xy'), dim=-1)
+    coord = torch.cat((coord, torch.ones_like(coord)[:, :, [0]]), dim=-1)  # z=1
     # coord = torch.as_tensor(coord, dtype=torch.float32, device=device)
     coord = coord[None]  # bs, h, w, 3
 
     D = depth[:, :, :, None, None]
-    # print(D.shape, Kinv[None, None, None, ...].shape, coord[:, :, :, :, None].shape )
     points = D * intrinsics_inv[None, None, None, ...] @ coord[:, :, :, :, None]
     # pts3D_1 live in your coordinate system. Convert them to Py3D's
     points = M[None, None, None, ...] @ points
-    # camera to world coordinates
-    points = extrinsics_R[None, None, None, ...] @ points + extrinsics_t[None, None, None, :, None]
+    # camera to world coordinates (world to cam is (R @ p) + t, this is the inverse of that)
+    points = extrinsics_R[None, None, None, ...].transpose(-2, -1) @ (points - extrinsics_t[None, None, None, :, None])
 
-    return torch.from_numpy(points[:, :, :, :3, 0][0]).to(device=device)
+    return points[:, :, :, :3, 0][0]
 
 def points_to_depth(points: torch.Tensor, intrinsics: torch.Tensor, output_size: Tuple[int, int], extrinsics_R: torch.Tensor = None, extrinsics_t: torch.Tensor = None, point_mask: torch.Tensor = None):
     """
@@ -438,10 +660,15 @@ def points_to_depth(points: torch.Tensor, intrinsics: torch.Tensor, output_size:
     M_inv[1, 1] = -1.0
     points = (M_inv @ points.T).T
 
-    # Projection to Image Plane
+    # projection to image plane
     projected = (intrinsics @ points.T).T
     u = projected[:, 0] / projected[:, 2]
     v = projected[:, 1] / projected[:, 2]
+
+    # image plane coordinates [-1, 1]^2 -> [0, max(output_size)-1]^2
+    # (assuming the fov is for the larger image dimension)
+    u = (u*0.5+0.5) * (max(output_size)-1)
+    v = (v*0.5+0.5) * (max(output_size)-1)
 
     u = np.around(np.clip(u, 0, output_size[1] - 1)).astype(int)
     v = np.around(np.clip(v, 0, output_size[0] - 1)).astype(int)

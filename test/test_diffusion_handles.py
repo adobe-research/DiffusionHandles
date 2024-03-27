@@ -167,7 +167,7 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
             rot_angle = float(transform['rotation_angle']) if 'rotation_angle' in transform else None
 
             # transform the foreground object
-            edited_img, raw_edited_depth, edited_disparity = diff_handles.transform_foreground(
+            edited_img, edited_disparity = diff_handles.transform_foreground(
                 depth=depth, prompt=prompt,
                 fg_mask=fg_mask, bg_depth=bg_depth,
                 inverted_null_text=inverted_null_text, inverted_noise=inverted_noise,
@@ -177,7 +177,7 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
 
             # save the edited depth
             save_image((edited_disparity/edited_disparity.max())[0], join(output_dir, sample_name, f'{transform_name}_disparity.png'))
-            save_image((raw_edited_depth/raw_edited_depth.max())[0], join(output_dir, sample_name, f'{transform_name}_depth_raw.png'))
+            # save_image((raw_edited_depth/raw_edited_depth.max())[0], join(output_dir, sample_name, f'{transform_name}_depth_raw.png'))
 
             # save the edited image
             save_image(edited_img[0], join(output_dir, sample_name, f'{transform_name}.png'))
