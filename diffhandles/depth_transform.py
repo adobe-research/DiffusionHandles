@@ -75,6 +75,21 @@ def transform_depth_new(
         rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
         use_input_depth_normalization = False):
 
+    if not fg_mask.any():
+        # foreground mask is empty, there is no foreground object
+        # return the image depth and empty correspondences
+        if use_input_depth_normalization:
+            _, depth_bounds = normalize_depth(1.0/depth, return_bounds=True)
+        else:
+            depth_bounds = None
+        correspondences = pack_correspondences(
+            torch.tensor([], dtype=torch.int64),
+            torch.tensor([], dtype=torch.int64),
+            torch.tensor([], dtype=torch.int64),
+            torch.tensor([], dtype=torch.int64),
+        )
+        return normalize_depth(1.0/depth, bounds=depth_bounds), correspondences
+
     # default transformation parameters
     if rot_angle is None:
         rot_angle = 0.0
@@ -163,6 +178,21 @@ def transform_depth(
         rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
         use_input_depth_normalization = False):
 
+    if not fg_mask.any():
+        # foreground mask is empty, there is no foreground object
+        # return the image depth and empty correspondences
+        if use_input_depth_normalization:
+            _, depth_bounds = normalize_depth(1.0/depth, return_bounds=True)
+        else:
+            depth_bounds = None
+        correspondences = pack_correspondences(
+            torch.tensor([], dtype=torch.int64),
+            torch.tensor([], dtype=torch.int64),
+            torch.tensor([], dtype=torch.int64),
+            torch.tensor([], dtype=torch.int64),
+        )
+        return normalize_depth(1.0/depth, bounds=depth_bounds), correspondences
+    
     # default transformation parameters
     if rot_angle is None:
         rot_angle = 0.0
@@ -251,10 +281,6 @@ def transform_depth(
 
     original_positions_y, original_positions_x = np.where(infer_visible_original)
 
-    #target_mask_binary = target_mask.to(torch.int)
-    # Convert the target mask to uint8
-    #target_mask_uint8 = target_mask_binary.detach().cpu().numpy().astype(np.uint8) * 255
-
     target_mask_uint8 = target_mask.astype(np.uint8)*255
 
     # Define a kernel for the closing operation (you can adjust the size and shape)
@@ -262,30 +288,13 @@ def transform_depth(
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (img_res // 50 , img_res // 50))
 
-    # Perform the closing operation
-    #target_mask_cleaned = cv2.morphologyEx(target_mask_uint8, cv2.MORPH_CLOSE, kernel)
-
     target_mask_cleaned = target_mask_uint8
-
-    #target_mask_cleaned = cv2.medianBlur(target_mask_cleaned, 3)
-    #target_mask_cleaned = cv2.medianBlur(target_mask_cleaned, 3)
-
-
-    # Perform the closing operation
-    #target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_OPEN, open_kernel)
-
 
     # Perform the closing operation
     target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_CLOSE, kernel)
 
     # Perform the closing operation
     target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_OPEN, open_kernel)
-
-
-    # Perform the closing operation
-    #target_mask_cleaned = cv2.morphologyEx(target_mask_cleaned, cv2.MORPH_CLOSE, kernel)
-
-
 
     # Filter correspondences based on the mask
     filtered_original_x = []
@@ -302,35 +311,12 @@ def transform_depth(
 
     original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y = np.array(filtered_original_x), np.array(filtered_original_y), np.array(filtered_transformed_x), np.array(filtered_transformed_y)
 
-    #save_positions(original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y, save_path + 'positions.npy')
-
     # correspondences = np.stack((original_positions_x, original_positions_y, transformed_positions_x, transformed_positions_y), axis=-1)
     correspondences = pack_correspondences(
         torch.from_numpy(original_positions_x),
         torch.from_numpy(original_positions_y),
         torch.from_numpy(transformed_positions_x),
         torch.from_numpy(transformed_positions_y))
-
-    # # img_tensor = np.array(cut_img)
-    # img_tensor = np.array(self.fg_mask.cpu().numpy()[0, 0]) # TODO: check that this works
-    # ref_mask = (img_tensor[:, :] > 0.5)
-    # mask = np.zeros_like(ref_mask, dtype = np.uint8)
-    # mask[ref_mask.nonzero()] = 255
-    # mask = max_pool_numpy(mask, 512 // self.img_res)
-    # occluded_mask = mask
-
-    # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))
-    # occluded_mask = cv2.dilate(occluded_mask.astype(np.uint8), kernel)
-
-    #rendered_depth = rendered_depth.squeeze()
-    #bg_img = bg_img[:,:,0]
-
-    #visualize_img(rendered_depth.detach().cpu().numpy(), save_path + 'rendered_depth')
-
-    # visualize_img(target_mask_cleaned, 'clean_target_mask')
-    # visualize_img(target_mask_uint8, 'init_target_mask')
-
-    #plot_img(target_mask_cleaned)
 
 
     noise_mask = target_mask_uint8.astype(int) - target_mask_cleaned.astype(int)
@@ -339,110 +325,92 @@ def transform_depth(
     final_mask[final_mask < 0] = 0
     noise_mask[noise_mask < 0] = 0
 
-    #plot_img(final_mask)
-
     inpaint_mask = final_mask + noise_mask #+ occluded_mask
     inpaint_mask = (inpaint_mask > 0).astype(np.uint8)
-
-    # visualize_img(inpaint_mask, 'inpaint_mask')
 
     kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (1, 1))
     inpaint_mask_dilated = cv2.dilate(inpaint_mask, kernel)
 
     lap_inpainted_depth_map = poisson_solve(np.array(rendered_depth), inpaint_mask_dilated)
 
-    #lap_inpainted_depth_map[np.where(target_mask_cleaned == 0)] = 1 - bg_img[np.where(target_mask_cleaned == 0)]
-
-    # img = lap_inpainted_depth_map
-    # img = (img - img.min())/(img.max() - img.min())
-    # img = (img*255).round().astype("uint8")
-
-    #plot_img(img)
-
-    #visualize_img(img,'fixed_depth_map_denoised')
-
-    # img = target_mask_cleaned
-    # img = (img - img.min())/(img.max() - img.min())
-    # img = (img*255).round().astype("uint8")
-
     lap_inpainted_depth_map = torch.from_numpy(lap_inpainted_depth_map).to(device=device, dtype=torch.float32)[None, None]
     target_mask_cleaned = torch.from_numpy(target_mask_cleaned.astype(np.float32) / 255.0).to(device=device)[None, None]
 
     return lap_inpainted_depth_map, correspondences
 
-def transform_point_cloud2(points, axis, angle_degrees, x, y, z):
-    """
-    Rotate point cloud around the centroid of points selected by the mask.
+# def transform_point_cloud2(points, axis, angle_degrees, x, y, z):
+#     """
+#     Rotate point cloud around the centroid of points selected by the mask.
     
-    Parameters:
-    - points: numpy array of shape (512, 512, 3)
-    - axis: rotation axis, numpy array of shape (3,)
-    - angle_degrees: rotation angle in degrees
-    - mask: boolean array of shape (512, 512) indicating which pixels to consider for the centroid
+#     Parameters:
+#     - points: numpy array of shape (512, 512, 3)
+#     - axis: rotation axis, numpy array of shape (3,)
+#     - angle_degrees: rotation angle in degrees
+#     - mask: boolean array of shape (512, 512) indicating which pixels to consider for the centroid
     
-    Returns:
-    - rotated_points: numpy array of shape (512, 512, 3)
-    """
-    # #cut_img = Image.open('car-cut.png')
-    # # cut_img = mask
-    # #cut_img = Image.open('cup-table-cut (2).png')    
-    # img_tensor = np.array(mask)
-    # ref_mask = (img_tensor[:, :] > 0.5)
-    # mask = np.zeros_like(ref_mask, dtype = np.uint8) 
-    # mask[ref_mask.nonzero()] = 255
-    # # mask = max_pool_numpy(mask, 512 // img_dim) # doesn't do anything as img_dim=512
+#     Returns:
+#     - rotated_points: numpy array of shape (512, 512, 3)
+#     """
+#     # #cut_img = Image.open('car-cut.png')
+#     # # cut_img = mask
+#     # #cut_img = Image.open('cup-table-cut (2).png')    
+#     # img_tensor = np.array(mask)
+#     # ref_mask = (img_tensor[:, :] > 0.5)
+#     # mask = np.zeros_like(ref_mask, dtype = np.uint8) 
+#     # mask[ref_mask.nonzero()] = 255
+#     # # mask = max_pool_numpy(mask, 512 // img_dim) # doesn't do anything as img_dim=512
 
-    # # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))  # Adjust the size as needed
-    # #mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
-    # #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))  # Adjust the size as needed    
-    # #mask = cv2.erode(mask, kernel)
-    # #mask = cv2.dilate(mask, kernel)
+#     # # kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (5, 5))  # Adjust the size as needed
+#     # #mask = cv2.morphologyEx(mask, cv2.MORPH_OPEN, kernel)
+#     # #kernel = cv2.getStructuringElement(cv2.MORPH_ELLIPSE, (2, 2))  # Adjust the size as needed    
+#     # #mask = cv2.erode(mask, kernel)
+#     # #mask = cv2.dilate(mask, kernel)
     
-    # #visualize_img(mask, 'curr_mask')
-    # mask = (mask[:,:] != 0)
+#     # #visualize_img(mask, 'curr_mask')
+#     # mask = (mask[:,:] != 0)
 
-    # mask = mask.astype(bool)
+#     # mask = mask.astype(bool)
 
-    # modified_indices = mask.flatten()  # Flattened version of the mask to match the reshaped points
+#     # modified_indices = mask.flatten()  # Flattened version of the mask to match the reshaped points
     
-    # Convert angle from degrees to radians
-    angle = np.radians(angle_degrees)
+#     # Convert angle from degrees to radians
+#     angle = np.radians(angle_degrees)
     
-    # Ensure axis is a unit vector
-    axis = axis / np.linalg.norm(axis)
+#     # Ensure axis is a unit vector
+#     axis = axis / np.linalg.norm(axis)
     
-    # Compute the centroid of the masked points
-    masked_points = points
+#     # Compute the centroid of the masked points
+#     masked_points = points
 
-    # trimesh_pc = trimesh.points.PointCloud(vertices=masked_points)
-    # trimesh_pc.export("point_cloud_obj.glb")
+#     # trimesh_pc = trimesh.points.PointCloud(vertices=masked_points)
+#     # trimesh_pc.export("point_cloud_obj.glb")
 
 
-    centroid = np.mean(masked_points, axis=0)
+#     centroid = np.mean(masked_points, axis=0)
     
-    # Translate points to place centroid at the origin
-    translated_points = points - centroid
+#     # Translate points to place centroid at the origin
+#     translated_points = points - centroid
     
-    # Flatten the translated points
-    flattened_points = translated_points.reshape(-1, 3)
+#     # Flatten the translated points
+#     flattened_points = translated_points.reshape(-1, 3)
     
-    # Use the Rodriguez rotation formula
-    cos_theta = np.cos(angle)
-    sin_theta = np.sin(angle)
+#     # Use the Rodriguez rotation formula
+#     cos_theta = np.cos(angle)
+#     sin_theta = np.sin(angle)
     
-    term1 = flattened_points * cos_theta
-    term2 = np.cross(axis, flattened_points) * sin_theta
-    term3 = axis * np.dot(flattened_points, axis)[:, np.newaxis] * (1 - cos_theta)
+#     term1 = flattened_points * cos_theta
+#     term2 = np.cross(axis, flattened_points) * sin_theta
+#     term3 = axis * np.dot(flattened_points, axis)[:, np.newaxis] * (1 - cos_theta)
     
-    rotated_points_flattened = term1 + term2 + term3
+#     rotated_points_flattened = term1 + term2 + term3
 
-    # trimesh_pc = trimesh.points.PointCloud(vertices=rotated_points_flattened + centroid + np.array([x,y,z]))
-    # trimesh_pc.export("modified_point_cloud_obj.glb")
+#     # trimesh_pc = trimesh.points.PointCloud(vertices=rotated_points_flattened + centroid + np.array([x,y,z]))
+#     # trimesh_pc.export("modified_point_cloud_obj.glb")
     
-    # Reshape the points back to 512x512x3 and translate back to the original position
-    rotated_points = rotated_points_flattened + centroid + np.array([x, y, z])#+ np.array([ 0.0, 0.0, -0.175]) #+ np.array([ 0.5, 0.15, 1.0])#+ np.array([0, 0, -0.1])#+ np.array([-0.035, 0.01, 0.15])
+#     # Reshape the points back to 512x512x3 and translate back to the original position
+#     rotated_points = rotated_points_flattened + centroid + np.array([x, y, z])#+ np.array([ 0.0, 0.0, -0.175]) #+ np.array([ 0.5, 0.15, 1.0])#+ np.array([0, 0, -0.1])#+ np.array([-0.035, 0.01, 0.15])
     
-    return rotated_points
+#     return rotated_points
 
 
 def transform_point_cloud(points, axis, angle_degrees, x, y, z, mask):

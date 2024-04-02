@@ -15,9 +15,10 @@ from diffhandles import DiffusionHandles
 from utils import crop_and_resize
 
 class DiffhandlesWebapp:
-    def __init__(self, netpath: str, port: int, config_path: str = None, device: str = 'cuda:0'):
+    def __init__(self, netpath: str, port: int, config_path: str = None, debug_images=False, device: str = 'cuda:0'):
         self.netpath = netpath
         self.port = port
+        self.debug_images = debug_images
         self.config_path = config_path
         self.diff_handles = DiffusionHandles(conf_path=config_path)
         self.diff_handles.to(device)
@@ -78,7 +79,18 @@ class DiffhandlesWebapp:
 
         edited_img = (edited_img * 255.0)[0].permute(1, 2, 0).to(dtype=torch.uint8).cpu().numpy()
 
-        return edited_img
+        if self.debug_images:
+            debug_images = torch.cat([
+                img,
+                ((depth - depth.min()) / (depth.max() - depth.min()))[:, [0,0,0], ...],
+                fg_mask[:, [0,0,0], ...],
+                ((bg_depth - bg_depth.min()) / (bg_depth.max() - bg_depth.min()))[:, [0,0,0], ...],
+                edited_disparity[:, [0,0,0], ...] / 255.0
+            ], dim=3)
+            debug_images = (debug_images * 255)[0].permute(1, 2, 0).to(dtype=torch.uint8).cpu().numpy()
+            return edited_img, debug_images
+        else:
+            return edited_img
 
     def build_gradio_app(self):
 
@@ -99,6 +111,8 @@ class DiffhandlesWebapp:
                     gr_trans_z = gr.Number(label="Translation Z", value=0.0, minimum=-100.0, maximum=100.0)
                     generate_button = gr.Button("Submit")
                 with gr.Column():
+                    if self.debug_images:
+                        gr_debug_images = gr.Image(label="Debug Images")
                     gr_edited_image = gr.Image(label="Edited Image")
 
             generate_button.click(
@@ -106,26 +120,8 @@ class DiffhandlesWebapp:
                 inputs=[
                     gr_text_prompt, gr_input_image, gr_fg_mask, gt_depth, gt_bg_depth,
                     gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z],
-                outputs=[
-                    gr_edited_image])
+                outputs=[gr_edited_image, gr_debug_images] if self.debug_images else [gr_edited_image])
 
-        # gr_app = gr.Interface(
-        #     fn=self.run_diffhandles,
-        #     inputs=[
-        #         gr.Textbox(label="Text Prompt"),
-        #         gr.Image(label="Input Image"),
-        #         gr.Image(label="Foreground Mask"),
-        #         HDRImage(label="Depth"),
-        #         HDRImage(label="Background Depth"),
-        #         gr.Slider(label="Rotation Angle", value=0.0, minimum=-180.0, maximum=180.0, step=1.0),
-        #         gr.Number(label="Rotation Axis X", value=0.0, minimum=-1.0, maximum=1.0),
-        #         gr.Number(label="Rotation Axis Y", value=1.0, minimum=-1.0, maximum=1.0),
-        #         gr.Number(label="Rotation Axis Z", value=0.0, minimum=-1.0, maximum=1.0),
-        #         gr.Number(label="Translation X", value=0.0, minimum=-100.0, maximum=100.0),
-        #         gr.Number(label="Translation Y", value=0.0, minimum=-100.0, maximum=100.0),
-        #         gr.Number(label="Translation Z", value=0.0, minimum=-100.0, maximum=100.0),
-        #         ],
-        #     outputs=["image"])
         return gr_app
 
     def start(self):
@@ -148,10 +144,13 @@ def parse_args():
     parser.add_argument('--port', type=int, default=6006)
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--config_path', type=str, default=None)
+    parser.add_argument('--debug_images', action='store_true', default=False)
     return parser.parse_args()
 
 if __name__ == '__main__':
     args = parse_args()
 
-    server = DiffhandlesWebapp(netpath=args.netpath, port=args.port, config_path=args.config_path, device=args.device)
+    server = DiffhandlesWebapp(
+        netpath=args.netpath, port=args.port, config_path=args.config_path,
+        debug_images=args.debug_images, device=args.device)
     server.start()

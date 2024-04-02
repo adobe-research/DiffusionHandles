@@ -1,9 +1,9 @@
 import torch
 import torchvision
 import imageio.v3 as imageio
-import imageio as imageio_v2
+import imageio.plugins as imageio_plugins
 
-imageio_v2.plugins.freeimage.download() # to load exr files
+imageio_plugins.freeimage.download() # to load exr files
 
 def load_image(path: str) -> torch.Tensor:
     # img = Image.open(path)

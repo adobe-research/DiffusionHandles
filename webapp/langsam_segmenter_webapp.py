@@ -55,7 +55,11 @@ class LangSAMSegmenterWebapp:
         print(boxes)
         print(prompts)
         print(logits)
-        mask = masks[[0, 0, 0], :, :].to(device=self.segmenter.device, dtype=torch.float32)
+        if len(prompts) == 0:
+            # nothing was selected
+            mask = torch.zeros((3, self.img_res, self.img_res), device=self.segmenter.device, dtype=torch.float32)
+        else:
+            mask = masks[[0, 0, 0], :, :].to(device=self.segmenter.device, dtype=torch.float32)
 
         print(mask.shape)
 
