@@ -40,6 +40,7 @@ class DiffhandlesPipelineWebapp:
         self.timeout_seconds = timeout_seconds
         self.debug_images = debug_images
         self.device = torch.device(device)
+        self.img_res = 512
         imageio_plugins.freeimage.download() # to load exr files
 
     def select_foreground(self, img: npt.NDArray, object_prompt: str):
@@ -94,6 +95,14 @@ class DiffhandlesPipelineWebapp:
         # print(f'{depth.shape} {depth.dtype}')
         # print(f'{bg_depth.shape} {bg_depth.dtype}')
 
+        # pre-process inputs
+        img = torch.from_numpy(img).to(dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
+        fg_mask = torch.from_numpy(fg_mask).to(dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
+        img = crop_and_resize(img=img, size=self.img_res)
+        fg_mask = crop_and_resize(img=fg_mask, size=self.img_res)
+        img = (img * 255.0)[0].permute(1, 2, 0).to(dtype=torch.uint8).numpy()
+        fg_mask = (fg_mask * 255.0)[0].permute(1, 2, 0).to(dtype=torch.uint8).numpy()
+
         with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
             f.close()
             img_path = f.name
@@ -146,15 +155,15 @@ class DiffhandlesPipelineWebapp:
             if pathlib.Path(temp_path).is_file():
                 pathlib.Path(temp_path).unlink()
 
-        img_res = 512
+        
         depth = torch.from_numpy(depth).to(dtype=torch.float32, device=self.device)[None, None, ...]
         fg_mask = torch.from_numpy(fg_mask).to(dtype=torch.float32, device=self.device).permute(2, 0, 1)[None, ...] / 255.0
         bg_depth = torch.from_numpy(bg_depth).to(dtype=torch.float32, device=self.device)[None, None, ...]
-        depth = crop_and_resize(img=depth, size=img_res)
-        bg_depth = crop_and_resize(img=bg_depth, size=img_res)
+        depth = crop_and_resize(img=depth, size=self.img_res)
+        bg_depth = crop_and_resize(img=bg_depth, size=self.img_res)
         if fg_mask.shape[1] > 1:
             fg_mask = fg_mask.mean(dim=1, keepdim=True) # average channels
-        fg_mask = crop_and_resize(img=fg_mask, size=img_res)
+        fg_mask = crop_and_resize(img=fg_mask, size=self.img_res)
         fg_mask = (fg_mask>0.5).to(dtype=torch.float32, device=self.device)
         rot_axis = torch.tensor([rot_axis_x, rot_axis_y, rot_axis_z], dtype=torch.float32, device=self.device)
         translation = torch.tensor([trans_x, trans_y, trans_z], dtype=torch.float32, device=self.device)
@@ -208,6 +217,14 @@ class DiffhandlesPipelineWebapp:
         if any(inp is None for inp in [prompt, img, fg_mask]):
             return None
 
+        # pre-process inputs
+        img = torch.from_numpy(img).to(dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
+        fg_mask = torch.from_numpy(fg_mask).to(dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
+        img = crop_and_resize(img=img, size=self.img_res)
+        fg_mask = crop_and_resize(img=fg_mask, size=self.img_res)
+        img = (img * 255.0)[0].permute(1, 2, 0).to(dtype=torch.uint8).numpy()
+        fg_mask = (fg_mask * 255.0)[0].permute(1, 2, 0).to(dtype=torch.uint8).numpy()
+        
         job_manager = GradioJobManager()
 
         # print(prompt)
