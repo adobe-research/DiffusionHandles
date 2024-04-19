@@ -2,7 +2,7 @@ import time
 
 import gradio_client
 
-class ObjectPeelingClient():
+class ForegroundRemoverClient():
     def __init__(self, url: str, timeout_seconds: float = None):
         self.url = url
         self.client = gradio_client.Client(url, upload_files=True, download_files=True)
@@ -27,8 +27,8 @@ class ObjectPeelingClient():
         return bg_path
 
 if __name__ == '__main__':
-    # client = ObjectPeelingClient(url="http://localhost:6008/lama_inpainter")
-    client = ObjectPeelingClient(url="http://localhost:8891/g3i-dev/guerrero-dev/lama_inpainter")
+    # client = ObjectPeelingClient(url="http://localhost:6008/foreground_remover")
+    client = ForegroundRemoverClient(url="http://localhost:8891/g3i-dev/guerrero-dev/lama_inpainter")
     bg_path = client.remove_foreground(
         img_path="data/cube_toy/input.png",
         fg_mask_path="data/cube_toy/mask.png",

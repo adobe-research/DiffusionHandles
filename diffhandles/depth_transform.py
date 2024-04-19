@@ -70,7 +70,24 @@ def depth_to_mesh(depth: torch.Tensor, intrinsics: torch.Tensor, extrinsics_R: t
 
     return mesh
 
-def transform_depth_new(
+def transform_depth(
+        depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
+        rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
+        use_input_depth_normalization = False):
+
+    use_mesh = False
+    if use_mesh:
+        return transform_depth_mesh(
+            depth=depth, bg_depth=bg_depth, fg_mask=fg_mask, intrinsics=intrinsics,
+            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
+            use_input_depth_normalization=use_input_depth_normalization)
+    else:
+        return transform_depth_pc(
+            depth=depth, bg_depth=bg_depth, fg_mask=fg_mask, intrinsics=intrinsics,
+            rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
+            use_input_depth_normalization=use_input_depth_normalization)
+    
+def transform_depth_mesh(
         depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
         rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
         use_input_depth_normalization = False):
@@ -173,7 +190,7 @@ def transform_depth_new(
     return edited_disparity, correspondences
 
 
-def transform_depth(
+def transform_depth_pc(
         depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
         rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
         use_input_depth_normalization = False):

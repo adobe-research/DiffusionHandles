@@ -10,6 +10,7 @@ from diffusers import AutoencoderKL, UNet2DConditionModel, DDIMScheduler
 from diffusers.image_processor import VaeImageProcessor
 from diffusers.configuration_utils import FrozenDict
 from diffusers.utils import deprecate
+from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
 
 from diffhandles.model.unet_2d_condition import UNet2DConditionModel # this is the custom UNet that can also return intermediate activations and attentions
@@ -65,6 +66,9 @@ class GuidedStableDiffuser(GuidedDiffuser):
             self.unet.sample_size = 64
 
     def to(self, device: torch.device = None):
+
+        device=torch.device(device)
+        
         self.unet = self.unet.to(device=device)
         # self.tokenizer = self.tokenizer.to(device=device)
         self.text_encoder = self.text_encoder.to(device=device)
@@ -147,13 +151,23 @@ class GuidedStableDiffuser(GuidedDiffuser):
             [0, 0, 1]
             ], dtype=torch.float32, device=device)
 
-    def initial_inference(self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str): #, phrases: List[str]):
+    def initial_inference(self, init_latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str): #, phrases: List[str]):
+
+        num_timesteps = 50
+        strength = 1.0
+        seed = 2773
+        
+        generator = torch.manual_seed(seed)  # Seed generator to create the inital latent noise - 305 for car, 105 for cup, 155 for lamp
+        
+        #Set timesteps
+        self.scheduler.set_timesteps(num_timesteps, device=self.device)
+        timesteps, num_inference_steps = self.get_timesteps(num_timesteps, strength)
 
         if self.conf.use_depth:
             depth = self.init_depth(depth)
         
         # Encode Prompt
-        input_ids = self.tokenizer(
+        cond_input = self.tokenizer(
                 [prompt],
                 padding="max_length",
                 truncation=True,
@@ -161,16 +175,30 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 return_tensors="pt",
             )
 
-        cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
-        
-        generator = torch.manual_seed(2773)  # Seed generator to create the inital latent noise - 305 for car, 105 for cup, 155 for lamp
-        
+        cond_embeddings = self.text_encoder(cond_input.input_ids.to(self.device))[0]
 
-        strength = 1.0
+        if uncond_embeddings is None:
+            uncond_input = self.tokenizer(
+                [""],
+                padding="max_length",
+                max_length=self.tokenizer.model_max_length,
+                truncation=True,
+                return_tensors="pt",
+            )
+            uncond_embeddings = self.text_encoder(uncond_input.input_ids.to(self.device))[[0]]
+        if uncond_embeddings.shape[0] == 0:
+            uncond_embeddings = uncond_embeddings.expand(len(timesteps), -1, -1, -1)
         
-        #Set timesteps
-        self.scheduler.set_timesteps(50, device=self.device)
-        timesteps, num_inference_steps = self.get_timesteps(50, strength)
+        if init_latents is None:
+            # in_channels-1 because depth will be concatentated if depth is used
+            num_latent_channels = self.unet.config.in_channels-1 if self.conf.use_depth else self.unet.config.in_channels
+            init_latents = torch.zeros(
+                size=[1, num_latent_channels, self.unet.config.sample_size, self.unet.config.sample_size],
+                device=self.device, dtype=torch.float32)
+            noise = randn_tensor(
+                shape=[1, num_latent_channels, self.unet.config.sample_size, self.unet.config.sample_size],
+                generator=generator, device=self.device, dtype=torch.float32)
+            init_latents = self.scheduler.add_noise(init_latents, noise, timesteps[0])
 
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
@@ -178,6 +206,8 @@ class GuidedStableDiffuser(GuidedDiffuser):
         activation_list = [] 
         activation2_list = []
         activation3_list = []
+
+        latents = init_latents
         
         # obj_number = 2
         for t_idx, t in enumerate(tqdm(timesteps)):
@@ -244,13 +274,46 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]     
                 torch.cuda.empty_cache()
         
-        return activation_list, activation2_list, activation3_list, latents
+        activations = [
+            torch.stack(activation_list, dim=0),
+            torch.stack(activation2_list, dim=0),
+            torch.stack(activation3_list, dim=0)]
+        
+        return activations, latents, uncond_embeddings, init_latents
 
+    def encode_latent_image(self, image: torch.Tensor) -> torch.Tensor:
+        # image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).preprocess(image, output_type="pt")
+        # latent_image = self.vae.encode(image).latent_dist.mode() * self.vae.config.scaling_factor
+        # return latent_image
+        # TODO: check that the code above works correctly and is the same thing that the StabelDiffusionDepth2Img Pipeline is doing
+        # https://github.com/huggingface/diffusers/blob/v0.27.2/src/diffusers/pipelines/stable_diffusion/pipeline_stable_diffusion_depth2img.py
+        raise NotImplementedError
+    
+    def decode_latent_image(self, latent_image: torch.Tensor) -> torch.Tensor:
+        image = self.vae.decode(latent_image / self.vae.config.scaling_factor, return_dict=False)[0]
+        image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+        return image
+    
     def guided_inference(
             self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
-            activations_orig: torch.Tensor, activations2_orig: torch.Tensor, activations3_orig: torch.Tensor,
-            correspondences: torch.Tensor, save_intermediate_steps=False):
+            activations_orig: list[torch.Tensor],
+            correspondences: torch.Tensor, fg_weight: float = None, bg_weight: float = None, save_denoising_steps: bool = False):
+        
+        strength = 1.0
+        num_timesteps = 50
+        seed = 2773
 
+        if fg_weight is None:
+            fg_weight = self.conf.fg_weight
+        if bg_weight is None:
+            bg_weight = self.conf.bg_weight
+
+        generator = torch.manual_seed(seed)
+
+        #Set timesteps
+        self.scheduler.set_timesteps(num_timesteps, device=self.device)
+        timesteps, num_inference_steps = self.get_timesteps(num_timesteps, strength)
+        
         processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
         
         if self.conf.use_depth:
@@ -266,23 +329,19 @@ class GuidedStableDiffuser(GuidedDiffuser):
             )
 
         cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
-        generator = torch.manual_seed(2773)  
-        strength = 1.0
-
-        #Set timesteps
-        self.scheduler.set_timesteps(50, device=self.device)
-        timesteps, num_inference_steps = self.get_timesteps(50, strength)
 
         extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
 
         loss = torch.tensor(10000)
         # timestep_num = 0
         
-        if save_intermediate_steps:
-            intermediate_images = {
+        if save_denoising_steps:
+            denoising_steps = {
                 'opt': [],
                 'post-opt': [],
             }
+        
+        activations_orig, activations2_orig, activations3_orig = activations_orig[0], activations_orig[1], activations_orig[2]
         
         for t_idx, t in enumerate(tqdm(timesteps)):
             iteration = 0
@@ -294,8 +353,8 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
             activations_size = (activation3_orig.shape[-2], activation3_orig.shape[-1])
 
-            if save_intermediate_steps:
-                intermediate_images['opt'].append([])
+            if save_denoising_steps:
+                denoising_steps['opt'].append([])
                         
             while iteration < 3 and (t_idx < 38 and t_idx >= 0):
                 
@@ -390,7 +449,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 # print('appearance loss')
                 # print(appearance_loss)
 
-                loss = 30.0 * (self.conf.fg_weight*app_wt*appearance_loss + self.conf.bg_weight*bg_wt*bg_loss)
+                loss = 30.0 * (fg_weight*app_wt*appearance_loss + bg_weight*bg_wt*bg_loss)
 
                 # loss *= 30
 
@@ -404,11 +463,12 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 iteration += 1
                 torch.cuda.empty_cache()
 
-                if save_intermediate_steps:
+                if save_denoising_steps:
                     with torch.no_grad():
-                        image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-                        image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-                        intermediate_images['opt'][-1].append(image.detach().cpu())
+                        # image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
+                        # image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+                        image = self.decode_latent_image(latents)
+                        denoising_steps['opt'][-1].append(image.detach().cpu())
                 
             torch.set_grad_enabled(False)            
             with torch.no_grad():
@@ -438,18 +498,19 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 latents = self.scheduler.step(noise_pred, t, latents, **extra_step_kwargs, return_dict=False)[0]
                 torch.cuda.empty_cache()
 
-                if save_intermediate_steps:
-                    image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-                    image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-                    intermediate_images['post-opt'].append(image.detach().cpu())
+                if save_denoising_steps:
+                    # image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
+                    # image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
+                    image = self.decode_latent_image(latents)
+                    denoising_steps['post-opt'].append(image.detach().cpu())
             # timestep_num += 1
                     
         with torch.no_grad():
             image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
             image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
         
-        if save_intermediate_steps:
-            return image, intermediate_images
+        if save_denoising_steps:
+            return image, denoising_steps
         else:
             return image
 

@@ -164,7 +164,7 @@ class StableNullInverter(NullInverter):
                 context = torch.cat([uncond_embeddings, cond_embeddings])
                 latent_cur = self.get_noise_pred(latents=latent_cur, t=t, context=context, depth=depth, is_forward=False)
         bar.close()
-        return uncond_embeddings_list
+        return torch.stack(uncond_embeddings_list, dim=0)
     
     def invert(self, target_img: torch.Tensor, depth: torch.Tensor, prompt: str, num_inner_steps=10, early_stop_epsilon=1e-5, verbose=False):
         

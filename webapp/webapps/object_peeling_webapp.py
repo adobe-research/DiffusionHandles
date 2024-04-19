@@ -116,7 +116,7 @@ class ObjectPeelingWebapp:
 
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--netpath', type=str, default='/lama_inpainter')
+    parser.add_argument('--netpath', type=str, default='/foreground_remover')
     parser.add_argument('--port', type=int, default=6008)
     # parser.add_argument('--server_url', type=str, default='https://sensei-eks02.infra.adobesensei.io/ilo-demo/podemo/app2/api') # from devbox
     parser.add_argument('--server_url', type=str, default='http://10.51.208.194:6003/ilo-demo/podemo/app2/api') # from runai

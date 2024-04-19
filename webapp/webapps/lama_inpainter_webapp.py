@@ -1,29 +1,28 @@
 import os
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
-import sys
 import argparse
 
 import torch
 import numpy.typing as npt
 import scipy
-import gradio as gr
-from fastapi import FastAPI
-import uvicorn
 
 from saicinpainting import LamaInpainter
 
+from foreground_remover_webapp import ForegroundRemoverWebapp
+
 from utils import crop_and_resize
 
-class LamaInpainterWebapp:
+class LamaInpainterWebapp(ForegroundRemoverWebapp):
+
     def __init__(self, netpath: str, port: int, device: str = 'cuda:0'):
-        self.netpath = netpath
-        self.port = port
+        super().__init__(netpath=netpath, port=port)
+
         self.img_res = 512
 
         self.inpainter = LamaInpainter()
         self.inpainter.to(device)
 
-    def run_lama_inpainter(self, img: npt.NDArray = None, fg_mask: npt.NDArray = None, dilation: int = 3):
+    def remove_foreground(self, img: npt.NDArray = None, fg_mask: npt.NDArray = None, dilation: int = 3) -> npt.NDArray:
 
         print('run_lama_inpainter')
 
@@ -55,41 +54,9 @@ class LamaInpainterWebapp:
 
         return bg_img
 
-    def build_gradio_app(self):
-
-        with gr.Blocks() as gr_app:
-            with gr.Row():
-                with gr.Column():
-                    gr_input_image = gr.Image(label="Input Image")
-                    gr_fg_mask = gr.Image(label="Foreground Mask")
-                    gr_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=3, minimum=0, maximum=100)
-                    generate_button = gr.Button("Submit")
-                with gr.Column():
-                    gr_bg = gr.Image(label="Background")
-
-            generate_button.click(
-                self.run_lama_inpainter,
-                inputs=[gr_input_image, gr_fg_mask, gr_dilation],
-                outputs=[gr_bg])
-
-        return gr_app
-
-    def start(self):
-
-        gr_app = self.build_gradio_app()
-        gr_app = gr_app.queue()
-
-        app = FastAPI()
-        app = gr.mount_gradio_app(app, gr_app, path=self.netpath)
-
-        try:
-            uvicorn.run(app, host="0.0.0.0", port=self.port)
-        except KeyboardInterrupt:
-            sys.exit()
-
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--netpath', type=str, default='/lama_inpainter')
+    parser.add_argument('--netpath', type=str, default='/foreground_remover')
     parser.add_argument('--port', type=int, default=6008)
     parser.add_argument('--device', type=str, default='cuda:0')
     return parser.parse_args()

@@ -54,8 +54,11 @@ cd diffusionhandles
 pip install -e .[webapp]
 ```
 
-Start the server (use [tmux](https://github.com/tmux/tmux/wiki) or similar to keep the server running in the background):
+Start the full Diffusion Handles Pipeline WebApp in [tmux](https://github.com/tmux/tmux/wiki), where `netpath` is the base network path from the root of the server (for example `/demo` for a server at `https://my_server.com/demo`):
 ```bash
+sudo apt install tmux
+tmux
 cd webapp
-python diffhandles_webapp.py
+source start_webapps_in_tmux.sh <netpath>
 ```
+Check `start_webapps_in_tmux.sh` to adjust configuration details like the distribution of ports and GPUs among services.

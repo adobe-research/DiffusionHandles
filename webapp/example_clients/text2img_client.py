@@ -1,20 +1,18 @@
 import time
+from typing import Tuple
 
 import gradio_client
 
-class LangSAMSegmenterClient():
+class Text2imgClient():
     def __init__(self, url: str, timeout_seconds: float = None):
         self.url = url
         self.client = gradio_client.Client(url, upload_files=True, download_files=True)
         self.timeout_seconds = timeout_seconds
 
-    def estimate_segment(self, img_path: str, prompt: str):
+    def text2img(self, prompt: str):
         
-        job = self.client.submit(
-            # gradio_client.file(img_path), # for gradio version >= 4.21
-            img_path,
-            prompt)
-        
+        job = self.client.submit(prompt)
+
         job_time = 0
         while not job.done():
             time.sleep(0.1)
@@ -22,18 +20,17 @@ class LangSAMSegmenterClient():
             if self.timeout_seconds is not None and job_time > self.timeout_seconds:
                 raise TimeoutError("Image editing job timed out.")
         
-        mask_path = job.outputs()[0]
+        edited_image_path = job.outputs()[0]
 
-        return mask_path
+        return edited_image_path
 
 if __name__ == '__main__':
-    client = LangSAMSegmenterClient(url="http://localhost:6010/langsam_segmenter")
-    mask_path = client.estimate_segment(
-        img_path="data/sunflower/input.png",
-        prompt="sunflower",
+    client = Text2imgClient(url="http://localhost:6006/text2img")
+    edited_image_path = client.text2img(
+        prompt="a sunflower in the garden"
     )
     import os
     import shutil
     os.makedirs('results/sunflower', exist_ok=True)
-    shutil.copyfile(mask_path, "results/sunflower/mask.png")
+    shutil.copyfile(edited_image_path, "results/sunflower/text2img_test.png")
     print('done')

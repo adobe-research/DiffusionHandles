@@ -2,3 +2,4 @@ guided_diffuser:
   bg_weight: 1.25
   fg_weight: 1.5
   use_depth: true
+  save_denoising_steps: false

@@ -1,21 +1,17 @@
-import sys
 import argparse
-
 import torch
 import torchvision
 import numpy.typing as npt
-import gradio as gr
-from fastapi import FastAPI
-import uvicorn
 
 from lang_sam import LangSAM
 
+from foreground_selector_webapp import ForegroundSelectorWebapp
 from utils import crop_and_resize
 
-class LangSAMSegmenterWebapp:
+class LangSAMSegmenterWebapp(ForegroundSelectorWebapp):
     def __init__(self, netpath: str, port: int, device: str = 'cuda:0'):
-        self.netpath = netpath
-        self.port = port
+        super().__init__(netpath=netpath, port=port)
+
         self.img_res = 512
 
         if device != 'cuda:0':
@@ -67,40 +63,9 @@ class LangSAMSegmenterWebapp:
 
         return mask
 
-    def build_gradio_app(self):
-
-        with gr.Blocks() as gr_app:
-            with gr.Row():
-                with gr.Column():
-                    gr_input_image = gr.Image(label="Input Image", value="data/sunflower/input.png")
-                    gr_segment_prompt = gr.Textbox(label="Segment Prompt", value="sunflower")
-                    generate_button = gr.Button("Submit")
-                with gr.Column():
-                    gr_bg = gr.Image(label="Background")
-
-            generate_button.click(
-                self.run_langsam_segmenter,
-                inputs=[gr_input_image, gr_segment_prompt],
-                outputs=[gr_bg])
-
-        return gr_app
-
-    def start(self):
-
-        gr_app = self.build_gradio_app()
-        gr_app = gr_app.queue()
-
-        app = FastAPI()
-        app = gr.mount_gradio_app(app, gr_app, path=self.netpath)
-
-        try:
-            uvicorn.run(app, host="0.0.0.0", port=self.port)
-        except KeyboardInterrupt:
-            sys.exit()
-
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--netpath', type=str, default='/langsam_segmenter')
+    parser.add_argument('--netpath', type=str, default='/foreground_selector')
     parser.add_argument('--port', type=int, default=6010)
     parser.add_argument('--device', type=str, default='cuda:0')
     return parser.parse_args()

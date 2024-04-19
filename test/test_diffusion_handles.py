@@ -138,7 +138,7 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
             save_image(bg_img[0], join(output_dir, sample_name, 'bg.png'))
 
         # set the foreground object to get inverted null text, noise, and intermediate activations to use as guidance
-        bg_depth, inverted_null_text, inverted_noise, activations, activations2, activations3, latent_image = diff_handles.set_foreground(
+        bg_depth, inverted_null_text, inverted_noise, activations, latent_image = diff_handles.set_foreground(
             img=img, depth=depth, prompt=prompt, fg_mask=fg_mask, bg_depth=bg_depth)
 
         # save image reconstructed from inversion
@@ -167,13 +167,18 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
             rot_angle = float(transform['rotation_angle']) if 'rotation_angle' in transform else None
 
             # transform the foreground object
-            edited_img, edited_disparity = diff_handles.transform_foreground(
+            results = diff_handles.transform_foreground(
                 depth=depth, prompt=prompt,
                 fg_mask=fg_mask, bg_depth=bg_depth,
-                inverted_null_text=inverted_null_text, inverted_noise=inverted_noise,
-                activations=activations, activations2=activations2, activations3=activations3,
+                null_text_emb=inverted_null_text, init_noise=inverted_noise,
+                activations=activations,
                 rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
                 use_input_depth_normalization=False)
+
+            if diff_handles.conf.guided_diffuser.save_denoising_steps:
+                edited_img, edited_disparity, denoising_steps = results
+            else:
+                edited_img, edited_disparity = results
 
             # save the edited depth
             save_image((edited_disparity/edited_disparity.max())[0], join(output_dir, sample_name, f'{transform_name}_disparity.png'))
@@ -181,6 +186,11 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
 
             # save the edited image
             save_image(edited_img[0], join(output_dir, sample_name, f'{transform_name}.png'))
+
+            if diff_handles.conf.guided_diffuser.save_denoising_steps:
+                for denoising_idx in range(len(denoising_steps['opt'])):
+                    for opt_idx in range(len(denoising_steps['opt'][denoising_idx])):
+                        denoising_steps['opt'][denoising_idx][opt_idx] = (denoising_steps['opt'][denoising_idx][opt_idx] + 1) / 2
 
     # save sample names to result directory
     with open(join(output_dir, basename(test_set_path)), 'w') as f:

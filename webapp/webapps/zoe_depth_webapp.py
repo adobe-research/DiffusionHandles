@@ -1,31 +1,28 @@
 import os
 os.environ["OPENCV_IO_ENABLE_OPENEXR"]="1"
-import sys
 import argparse
 
 import torch
 import numpy.typing as npt
-import gradio as gr
-from gradio_hdrimage import HDRImage
-from fastapi import FastAPI
-import uvicorn
 
 from zoedepth.models.builder import build_model
 from zoedepth.utils.config import get_config
 
+from depth_estimator_webapp import DepthEstimatorWebapp
+
 from utils import crop_and_resize
 
-class ZoeDepthWebapp:
+class ZoeDepthWebapp(DepthEstimatorWebapp):
     def __init__(self, netpath: str, port: int, device: str = 'cuda:0'):
-        self.netpath = netpath
-        self.port = port
+        super().__init__(netpath=netpath, port=port)
+
         self.img_res = 512
 
         conf = get_config("zoedepth_nk", "infer")
         self.depth_estimator = build_model(conf)
         self.depth_estimator.to(device)
 
-    def run_zoe_depth(self, img: npt.NDArray = None):
+    def run_zoe_depth(self, img: npt.NDArray = None) -> npt.NDArray:
 
         print('run_zoe_depth')
 
@@ -49,39 +46,9 @@ class ZoeDepthWebapp:
 
         return depth
 
-    def build_gradio_app(self):
-
-        with gr.Blocks() as gr_app:
-            with gr.Row():
-                with gr.Column():
-                    gr_input_image = gr.Image(label="Input Image")
-                    generate_button = gr.Button("Submit")
-                with gr.Column():
-                    gr_depth = HDRImage(label="Depth")
-
-            generate_button.click(
-                self.run_zoe_depth,
-                inputs=[gr_input_image],
-                outputs=[gr_depth])
-
-        return gr_app
-
-    def start(self):
-
-        gr_app = self.build_gradio_app()
-        gr_app = gr_app.queue()
-
-        app = FastAPI()
-        app = gr.mount_gradio_app(app, gr_app, path=self.netpath)
-
-        try:
-            uvicorn.run(app, host="0.0.0.0", port=self.port)
-        except KeyboardInterrupt:
-            sys.exit()
-
 def parse_args():
     parser = argparse.ArgumentParser()
-    parser.add_argument('--netpath', type=str, default='/zoe_depth')
+    parser.add_argument('--netpath', type=str, default='/depth_estimator')
     parser.add_argument('--port', type=int, default=6007)
     parser.add_argument('--device', type=str, default='cuda:0')
     return parser.parse_args()
