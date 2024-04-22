@@ -11,8 +11,7 @@ class ForegroundSelectorClient():
     def estimate_segment(self, img_path: str, prompt: str):
         
         job = self.client.submit(
-            # gradio_client.file(img_path), # for gradio version >= 4.21
-            img_path,
+            gradio_client.file(img_path),
             prompt)
         
         job_time = 0

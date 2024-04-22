@@ -109,8 +109,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         imageio.imwrite(img_path, img)
 
         depth_job = GradioJob(job=self.depth_estimator_client.submit(
-            # gradio_client.file(img_path) # for gradio version >= 4.21
-            img_path))
+            gradio_client.file(img_path)))
 
         input_image_identity_path = None
         def read_input_image_identity(jobs, job_manager):
@@ -126,8 +125,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             depth = np.asarray(imageio.imread(depth_path))
             set_input_job = GradioJob(job=self.diffhandles_client.submit(
                 prompt,
-                # gradio_client.file(depth_path), gradio_client.file(img_path), # for gradio version >= 4.21
-                depth_path, img_path,
+                gradio_client.file(depth_path), gradio_client.file(img_path),
                 api_name="/set_input_image"))
             job_manager.add_job(set_input_job)
             job_manager.add_callback(func=read_input_image_identity, when_jobs_done=[set_input_job])
@@ -164,8 +162,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             fg_mask = np.asarray(imageio.imread(fg_mask_path))
 
         fg_mask_job = GradioJob(job=self.foreground_selector_client.submit(
-            # gradio_client.file(img_path), # for gradio version >= 4.21
-            img_path,
+            gradio_client.file(img_path),
             object_prompt))
 
         job_manager.add_job(fg_mask_job)
@@ -220,8 +217,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         imageio.imwrite(fg_mask_path, fg_mask)
 
         bg_job = GradioJob(job=self.foreground_remover_client.submit(
-            # gradio_client.file(img_path), gradio_client.file(fg_mask_path), # for gradio version >= 4.21
-            img_path, fg_mask_path,
+            gradio_client.file(img_path), gradio_client.file(fg_mask_path),
             fg_mask_dilation))
 
         bg_depth_harmonized_path = None
@@ -243,8 +239,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             bg_depth_path = jobs[0].outputs()[0]
             bg_depth = np.asarray(imageio.imread(bg_depth_path))
             set_foreground_job = GradioJob(job=self.diffhandles_client.submit(
-                # gradio_client.file(depth_path), gradio_client.file(fg_mask_path), gradio_client.file(bg_depth_path), # for gradio version >= 4.21
-                depth_path, fg_mask_path, bg_depth_path,
+                gradio_client.file(depth_path), gradio_client.file(fg_mask_path), gradio_client.file(bg_depth_path),
                 api_name="/set_foreground"))
             job_manager.add_job(set_foreground_job)
             job_manager.add_callback(func=read_bg_depth_harmonized, when_jobs_done=[set_foreground_job])
@@ -257,8 +252,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             if self.debug_images:
                 bg_img = np.asarray(imageio.imread(bg_path))
             bg_depth_job = GradioJob(job=self.depth_estimator_client.submit(
-                # gradio_client.file(bg_path) # for gradio version >= 4.21
-                bg_path))
+                gradio_client.file(bg_path)))
             job_manager.add_job(bg_depth_job)
             job_manager.add_callback(func=run_set_foreground, when_jobs_done=[bg_depth_job])
 
@@ -322,8 +316,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         depth_path = None
         if depth is None:
             depth_job = GradioJob(job=self.depth_estimator_client.submit(
-                # gradio_client.file(img_path) # for gradio version >= 4.21
-                img_path))
+                gradio_client.file(img_path)))
 
             depth = None
             def read_depth(jobs, job_manager):
@@ -342,8 +335,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         bg_path = None
         if bg_depth_harmonized is None:
             bg_job = GradioJob(job=self.foreground_remover_client.submit(
-                # gradio_client.file(img_path), gradio_client.file(fg_mask_path), # for gradio version >= 4.21
-                img_path, fg_mask_path,
+                gradio_client.file(img_path), gradio_client.file(fg_mask_path),
                 fg_mask_dilation))
 
             bg_depth = None
@@ -359,8 +351,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                 if self.debug_images:
                     bg_img = np.asarray(imageio.imread(bg_path))
                 bg_depth_job = GradioJob(job=self.depth_estimator_client.submit(
-                    # gradio_client.file(bg_path) # for gradio version >= 4.21
-                    bg_path))
+                    gradio_client.file(bg_path)))
                 job_manager.add_job(bg_depth_job)
                 job_manager.add_callback(func=read_bg_depth, when_jobs_done=[bg_depth_job])
 
@@ -473,9 +464,13 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             bg_depth_harmonized: npt.NDArray = None, bg_img: npt.NDArray = None,
             rot_angle: float = 0.0, rot_axis_x: float = 0.0, rot_axis_y: float = 1.0, rot_axis_z: float = 0.0,
             trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0,
-            gr_fg_weight: float = 1.5, gr_bg_weight: float = 1.25):
+            gr_fg_weight: float = 1.5, gr_bg_weight: float = 1.25,
+            bg_depth_mesh_path: str = None, fg_depth_mesh_path: str = None):
 
-        if any(x is None for x in [input_image_identity_path, depth, bg_depth_harmonized, bg_img]):
+        inputs_from_previous_steps = [input_image_identity_path, depth, bg_depth_harmonized, bg_img]
+        if self.return_meshes:
+            inputs_from_previous_steps += [bg_depth_mesh_path, fg_depth_mesh_path]
+        if any(x is None for x in inputs_from_previous_steps):
             # Results of the previous steps are not available, compute the previous steps
             if self.return_meshes:
                 (input_image_identity_path, depth, gr_set_input_status,
@@ -540,8 +535,8 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
 
         transform_foreground_job = GradioJob(job=self.diffhandles_client.submit(
             prompt,
-            # gradio_client.file(fg_mask_path), gradio_client.file(depth_path), gradio_client.file(bg_depth_harmonized_path), gradio_client.file(input_image_identity_path), # for gradio version >= 4.21
-            fg_mask_path, depth_path, bg_depth_harmonized_path, input_image_identity_path,
+            gradio_client.file(fg_mask_path), gradio_client.file(depth_path),
+            gradio_client.file(bg_depth_harmonized_path), gradio_client.file(input_image_identity_path),
             rot_angle, rot_axis_x, rot_axis_y, rot_axis_z,
             trans_x, trans_y, trans_z,
             gr_fg_weight, gr_bg_weight,
@@ -608,11 +603,9 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         imageio.imwrite(fg_mask_path, fg_mask)
 
         depth_job = GradioJob(job=self.depth_estimator_client.submit(
-            # gradio_client.file(img_path) # for gradio version >= 4.21
-            img_path))
+            gradio_client.file(img_path)))
         bg_job = GradioJob(job=self.foreground_remover_client.submit(
-            # gradio_client.file(img_path), gradio_client.file(fg_mask_path), # for gradio version >= 4.21
-            img_path, fg_mask_path,
+            gradio_client.file(img_path), gradio_client.file(fg_mask_path),
             fg_mask_dilation))
 
         edited_image_path = None
@@ -635,8 +628,8 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             bg_depth_path = jobs[1].outputs()[0]
             diffhandles_job = GradioJob(job=self.diffhandles_client.submit(
                 prompt,
-                # gradio_client.file(img_path), gradio_client.file(fg_mask_path), gradio_client.file(depth_path), gradio_client.file(bg_depth_path), # for gradio version >= 4.21
-                img_path, fg_mask_path, depth_path, bg_depth_path,
+                gradio_client.file(img_path), gradio_client.file(fg_mask_path),
+                gradio_client.file(depth_path), gradio_client.file(bg_depth_path),
                 rot_angle, rot_axis_x, rot_axis_y, rot_axis_z,
                 trans_x, trans_y, trans_z,
                 gr_fg_weight, gr_bg_weight,
@@ -652,8 +645,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             if self.debug_images:
                 bg_img = np.asarray(imageio.imread(bg_path))
             bg_depth_job = GradioJob(job=self.depth_estimator_client.submit(
-                # gradio_client.file(bg_path) # for gradio version >= 4.21
-                bg_path))
+                gradio_client.file(bg_path)))
             job_manager.add_job(bg_depth_job)
             job_manager.add_callback(func=run_diffhandles, when_jobs_done=[depth_job, bg_depth_job])
 
@@ -822,17 +814,19 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                 gr_bg_depth_harmonized, gr_bg_img, gr_set_foreground_status,
                 gr_edited_image
             ]
+            edit_button_inputs = [
+                    gr_text_prompt, gr_input_image, gr_input_image_identity, gr_depth, gr_fg_mask, gr_fg_mask_dilation,
+                    gr_bg_depth_harmonized, gr_bg_img,
+                    gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z,
+                    gr_fg_weight, gr_bg_weight]
             if self.return_meshes:
                 edit_button_outputs += [gr_bg_depth_mesh, gr_fg_depth_mesh]
+                edit_button_inputs += [gr_bg_depth_mesh, gr_fg_depth_mesh]
             if self.debug_images:
                 edit_button_outputs.append(gr_debug_images)
             gr_edit_button.click(
                 self.transform_foreground,
-                inputs=[
-                    gr_text_prompt, gr_input_image, gr_input_image_identity, gr_depth, gr_fg_mask, gr_fg_mask_dilation,
-                    gr_bg_depth_harmonized, gr_bg_img,
-                    gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z,
-                    gr_fg_weight, gr_bg_weight],
+                inputs=edit_button_inputs,
                 outputs=edit_button_outputs)
 
             # gr_edit_button.click(

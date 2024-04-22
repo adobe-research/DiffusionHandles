@@ -22,7 +22,8 @@ class GradioWebapp:
         gr_app = gr_app.queue()
 
         app = FastAPI()
-        app = gr.mount_gradio_app(app, gr_app, path=self.netpath)
+        # app = gr.mount_gradio_app(app, gr_app, path=self.netpath)
+        app = gr.mount_gradio_app(app, gr_app, path='/', root_path=self.netpath)
 
         try:
             uvicorn.run(app, host="0.0.0.0", port=self.port)

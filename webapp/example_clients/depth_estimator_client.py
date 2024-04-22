@@ -12,9 +12,7 @@ class DepthEstimatorClient():
     def estimate_depth(self, img_path: str):
 
         job = self.client.submit(
-            # gradio_client.file(img_path) # for gradio version >= 4.21
-            img_path
-            )
+            gradio_client.file(img_path))
 
         job_time = 0
         while not job.done():
