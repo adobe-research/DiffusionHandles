@@ -1,4 +1,4 @@
-from os.path import join, exists, basename
+from os.path import join, exists, basename, splitext
 from os import makedirs
 import json
 from collections import OrderedDict
@@ -19,6 +19,8 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device)
+
+    img_res = 512
 
     # # TEMP!
     # # need to:
@@ -82,6 +84,15 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
     with open(join(output_dir, 'config.yaml'), 'w') as f:
         OmegaConf.save(config=diff_handles.conf, f=f)
 
+    # generate a webpage for the results
+    generate_results_webpage(
+        test_set_path=args.test_set_path,
+        website_path=join(args.output_dir, f'{splitext(basename(args.test_set_path))[0]}_summary.html'),
+        relative_image_dir='.',
+        show_denoising_steps=diff_handles.diffuser.conf.save_denoising_steps,
+        num_timesteps=diff_handles.diffuser.conf.num_timesteps,
+        num_optsteps=diff_handles.diffuser.conf.num_optsteps)
+
     # iterate over test set samples
     print(f"Transforming for {len(dataset_names)} samples ...")
     for sample_idx, (sample_name, transform_names) in enumerate(dataset_names.items()):
@@ -125,7 +136,7 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
 
         # load inputs for the sample
         img, fg_mask, depth, bg_depth = load_diffhandles_inputs(
-            sample_dir=join(input_dir, sample_name), img_res=diff_handles.img_res, device=device)
+            sample_dir=join(input_dir, sample_name), img_res=img_res, device=device)
 
         # save inputs for visualization to results directory
         save_image(img[0], join(output_dir, sample_name, 'input.png'))
@@ -134,12 +145,24 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
         save_image((bg_depth/bg_depth.max())[0], join(output_dir, sample_name, 'bg_depth.png'))
         if exists(join(input_dir, sample_name, 'bg.png')):
             bg_img = load_image(join(input_dir, sample_name, 'bg.png'))[None, ...]
-            bg_img = crop_and_resize(img=bg_img, size=diff_handles.img_res)
+            bg_img = crop_and_resize(img=bg_img, size=img_res)
             save_image(bg_img[0], join(output_dir, sample_name, 'bg.png'))
 
-        # set the foreground object to get inverted null text, noise, and intermediate activations to use as guidance
-        bg_depth, inverted_null_text, inverted_noise, activations, latent_image = diff_handles.set_foreground(
-            img=img, depth=depth, prompt=prompt, fg_mask=fg_mask, bg_depth=bg_depth)
+        # # set the foreground object to get inverted null text, noise, and intermediate activations to use as guidance
+        # bg_depth, null_text_emb, init_noise, activations, latent_image = diff_handles.set_foreground(
+        #     img=img, depth=depth, prompt=prompt, fg_mask=fg_mask, bg_depth=bg_depth)
+
+        # invert the input image to get initial noise and null text
+        # that can be used to reconstruct the input image with the diffusion model
+        null_text_emb, init_noise = diff_handles.invert_input_image(img, depth, prompt)
+
+        # reconstruct the input image from the inverted null text and noise,
+        # and save intermediate activations that will be used as guidance for the image edit
+        null_text_emb, init_noise, activations, latent_image = diff_handles.generate_input_image(
+            depth=depth, prompt=prompt, null_text_emb=null_text_emb, init_noise=init_noise)
+
+        # set the foreground object to get an updated background depth
+        bg_depth = diff_handles.set_foreground(depth=depth, fg_mask=fg_mask, bg_depth=bg_depth)
 
         # save image reconstructed from inversion
         with torch.no_grad():
@@ -170,7 +193,7 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
             results = diff_handles.transform_foreground(
                 depth=depth, prompt=prompt,
                 fg_mask=fg_mask, bg_depth=bg_depth,
-                null_text_emb=inverted_null_text, init_noise=inverted_noise,
+                null_text_emb=null_text_emb, init_noise=init_noise,
                 activations=activations,
                 rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
                 use_input_depth_normalization=False)
@@ -188,9 +211,12 @@ def test_diffusion_handles(test_set_path:str, input_dir:str, output_dir:str, ski
             save_image(edited_img[0], join(output_dir, sample_name, f'{transform_name}.png'))
 
             if diff_handles.conf.guided_diffuser.save_denoising_steps:
+                denoising_steps_dir = join(output_dir, sample_name, f'{transform_name}_denoising_steps')
+                makedirs(denoising_steps_dir, exist_ok=True)
                 for denoising_idx in range(len(denoising_steps['opt'])):
                     for opt_idx in range(len(denoising_steps['opt'][denoising_idx])):
-                        denoising_steps['opt'][denoising_idx][opt_idx] = (denoising_steps['opt'][denoising_idx][opt_idx] + 1) / 2
+                        denoising_steps['opt'][denoising_idx][opt_idx] = denoising_steps['opt'][denoising_idx][opt_idx]
+                        save_image(denoising_steps['opt'][denoising_idx][opt_idx][0], join(denoising_steps_dir, f'step_{denoising_idx}_opt_{opt_idx}.png', ))
 
     # save sample names to result directory
     with open(join(output_dir, basename(test_set_path)), 'w') as f:
@@ -237,5 +263,10 @@ def parse_args():
 if __name__ == '__main__':
     args = parse_args()
 
-    test_diffusion_handles(test_set_path=args.test_set_path, input_dir=args.input_dir, output_dir=args.output_dir, skip_existing=args.skip_existing, config_path=args.config_path, device=args.device)
-    generate_results_webpage(test_set_path=join(args.output_dir, basename(args.test_set_path)), website_path=join(args.output_dir, 'summary.html'), relative_image_dir='.')
+    test_diffusion_handles(
+        test_set_path=args.test_set_path,
+        input_dir=args.input_dir,
+        output_dir=args.output_dir,
+        skip_existing=args.skip_existing,
+        config_path=args.config_path,
+        device=args.device)

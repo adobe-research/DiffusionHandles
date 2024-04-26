@@ -87,7 +87,7 @@ class DiffusionHandles:
 
         return null_text_emb, init_noise, activations, latent_image
     
-    def set_foreground_new(self, depth: torch.Tensor, fg_mask: torch.Tensor, bg_depth: torch.Tensor) -> torch.Tensor:
+    def set_foreground(self, depth: torch.Tensor, fg_mask: torch.Tensor, bg_depth: torch.Tensor) -> torch.Tensor:
         """
         Select the foreground object in the input image. 
 
@@ -109,59 +109,6 @@ class DiffusionHandles:
         bg_depth = torch.from_numpy(bg_depth).to(device=self.device)[None, None]
 
         return bg_depth
-
-    def set_foreground(
-            self, img: torch.Tensor, depth: torch.Tensor, prompt: str, fg_mask: torch.Tensor, bg_depth: torch.Tensor
-            ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, list[torch.Tensor], torch.Tensor]:
-        """
-        Select the foreground object in the image. The following steps are performed:
-        1) The background depth is updated by infilling the hole in the depth of the input image
-
-        Args:
-            img: The input image.
-            depth: Depth of the input image.
-            prompt: Full prompt for the input image.
-            fg_mask: A mask of the foreground object.
-            bg_depth: Depth of the background (with removed foreground object).
-
-        Returns:
-            bg_depth: An updated background depth that has been adjusted to better match the depth of the input image.
-            inverted_null_text: The null text of the inverted input image.
-            inverted_noise: The noise of the inverted input image.
-            activations: Activations from the first diffusion inference pass (from layers 1-3 of the decoder of the UNet as a list with 3 entries).
-            latent_image: latent encoding of the reconstructed input image
-        """
-
-        # infill hole in the depth of the input image (where the foreground object used to be)
-        # with the depth of the background image
-        bg_depth = solve_laplacian_depth(
-            depth[0, 0].cpu().numpy(),
-            bg_depth[0, 0].cpu().numpy(),
-            scipy.ndimage.binary_dilation(fg_mask[0, 0].cpu().numpy(), iterations=15))
-        bg_depth = torch.from_numpy(bg_depth).to(device=self.device)[None, None]
-
-        # 3d-transform depth
-        # TODO: this should work on and return unnormalized depth instead of normalized disparity
-        with torch.no_grad():
-            disparity, correspondences = transform_depth(
-                depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
-                intrinsics=self.diffuser.get_depth_intrinsics(device=depth.device),
-                rot_angle=0,
-                rot_axis=torch.tensor([0.0, 1.0, 0.0], dtype=torch.float32, device=self.device),
-                translation=torch.tensor([0.0, 0.0, 0.0], dtype=torch.float32, device=self.device),
-                use_input_depth_normalization=False)
-
-        # invert image to get noise and null text that can be used to reproduce the image
-        _, inverted_noise, inverted_null_text = self.inverter.invert(
-            target_img=img, depth=disparity, prompt=prompt, num_inner_steps=5 ,verbose=True)
-
-        # perform first diffusion inference pass to get intermediate features
-        with torch.no_grad():
-            activations, latent_image, _, _ = self.diffuser.initial_inference(
-                init_latents=inverted_noise, depth=disparity, uncond_embeddings=inverted_null_text,
-                prompt=prompt)
-
-        return bg_depth, inverted_null_text, inverted_noise, activations, latent_image
 
     def transform_foreground(
             self, depth: torch.Tensor, prompt: str,

@@ -256,7 +256,7 @@ class DiffhandlesWebapp(GradioWebapp):
         null_text_emb, init_noise, activations, latent_image = self.diff_handles.generate_input_image(
             depth=depth, prompt=prompt, null_text_emb=null_text_emb, init_noise=init_noise)
 
-        bg_depth = self.diff_handles.set_foreground_new(depth=depth, fg_mask=fg_mask, bg_depth=bg_depth)
+        bg_depth = self.diff_handles.set_foreground(depth=depth, fg_mask=fg_mask, bg_depth=bg_depth)
 
         # (bg_depth, null_text_emb, init_noise, activations, latent_image
         #  ) = self.diff_handles.set_foreground(

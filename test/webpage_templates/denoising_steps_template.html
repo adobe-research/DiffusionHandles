@@ -1,0 +1,46 @@
+<!-- BEGIN: results_template.html -->
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Diffusion Handles Test Set Results</title>
+</head>
+<style>
+table { 
+    table-layout:fixed;
+    width:100%;
+}
+img {
+    max-height:100%;
+    max-width:100%;
+}
+thead th {
+    top: 0;
+    position: sticky;
+    z-index: 20;
+    background-color: white;
+}
+</style>
+<body>
+    <table>
+        <thead>
+            <tr>
+                <th>Denoising Step</th>
+                {% for optimization_step_index in optimization_steps %}
+                <th>Opt. Step {{ optimization_step_index }}</th>
+                {% endfor %}
+            </tr>
+        </thead>
+        <tbody>
+            {% for denoising_step in denoising_steps %}
+            <tr>
+                <td>{{ denoising_step.index }}</td>
+                {% for opt_step in denoising_step.opt_steps %}
+                <td><img src="{{ opt_step.url }}"></td>
+                {% endfor %}
+            </tr>
+            {% endfor %}
+        </tbody>
+    </table>
+</body>
+</html>
+<!-- END: results_template.html -->

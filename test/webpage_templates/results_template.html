@@ -32,7 +32,6 @@ thead th {
                 <th>Inverted</th>
                 <th>Edit</th>
                 <th>Edit Disparity</th>
-                <th>Edit Raw Depth</th>
             </tr>
         </thead>
         <tbody>
@@ -46,7 +45,9 @@ thead th {
                 <td><img src="{{ item.inverted_url }}"></td>
                 <td><img src="{{ item.edit }}"></td>
                 <td><img src="{{ item.edit_disp_url }}"></td>
-                <td><img src="{{ item.edit_depth_raw_url }}"></td>
+                {% if item.show_denoising_steps == true %}
+                <td><a href="{{ item.denoising_steps_url }}">Denoising Steps</a></td>
+                {% endif %}
             </tr>
             {% endfor %}
         </tbody>

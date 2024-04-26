@@ -16,7 +16,7 @@ from tqdm import tqdm
 from diffhandles.model.unet_2d_condition import UNet2DConditionModel # this is the custom UNet that can also return intermediate activations and attentions
 from diffhandles.guided_diffuser import GuidedDiffuser
 from diffhandles.utils import normalize_attn_torch, unpack_correspondences
-from diffhandles.losses import compute_localized_transformed_appearance_loss, compute_background_loss
+from diffhandles.losses import compute_foreground_loss, compute_background_loss
 
 class GuidedStableDiffuser(GuidedDiffuser):
     def __init__(self, conf):
@@ -153,15 +153,13 @@ class GuidedStableDiffuser(GuidedDiffuser):
 
     def initial_inference(self, init_latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str): #, phrases: List[str]):
 
-        num_timesteps = 50
         strength = 1.0
-        seed = 2773
         
-        generator = torch.manual_seed(seed)  # Seed generator to create the inital latent noise - 305 for car, 105 for cup, 155 for lamp
+        generator = torch.manual_seed(self.conf.seed)  # Seed generator to create the inital latent noise - 305 for car, 105 for cup, 155 for lamp
         
         #Set timesteps
-        self.scheduler.set_timesteps(num_timesteps, device=self.device)
-        timesteps, num_inference_steps = self.get_timesteps(num_timesteps, strength)
+        self.scheduler.set_timesteps(self.conf.num_timesteps, device=self.device)
+        timesteps, num_inference_steps = self.get_timesteps(self.conf.num_timesteps, strength)
 
         if self.conf.use_depth:
             depth = self.init_depth(depth)
@@ -239,13 +237,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 activation_list.append(activations[0])
                 activation2_list.append(activations2[0])
                 activation3_list.append(activations3[0])
-                # attention_obj_list = []
                             
-                # for m in range(obj_number):
-                #     attentions = retrieve_attention_maps(attn_map_integrated_down, attn_map_integrated_mid, attn_map_integrated_up, m, object_positions, latents.shape[2])
-                #     attention_obj_list.append(attentions)
-                # attention_list.append(attention_obj_list)
-
                 latent_model_input = torch.cat([latents]*2) #if do_classifier_free_guidance else latents
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 if self.conf.use_depth:
@@ -294,72 +286,95 @@ class GuidedStableDiffuser(GuidedDiffuser):
         image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
         return image
     
+   
     def guided_inference(
             self, latents: torch.Tensor, depth: torch.Tensor, uncond_embeddings: torch.Tensor, prompt: str,
             activations_orig: list[torch.Tensor],
             correspondences: torch.Tensor, fg_weight: float = None, bg_weight: float = None, save_denoising_steps: bool = False):
         
         strength = 1.0
-        num_timesteps = 50
-        seed = 2773
 
         if fg_weight is None:
             fg_weight = self.conf.fg_weight
         if bg_weight is None:
             bg_weight = self.conf.bg_weight
 
-        generator = torch.manual_seed(seed)
+        with torch.no_grad():
+        
+            generator = torch.manual_seed(self.conf.seed)
 
-        #Set timesteps
-        self.scheduler.set_timesteps(num_timesteps, device=self.device)
-        timesteps, num_inference_steps = self.get_timesteps(num_timesteps, strength)
-        
-        processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
-        
-        if self.conf.use_depth:
-            depth = self.init_depth(depth)
-        
-        # Encode Prompt
-        input_ids = self.tokenizer(
-                [prompt],
-                padding="max_length",
-                truncation=True,
-                max_length=self.tokenizer.model_max_length,
-                return_tensors="pt",
+            #Set timesteps
+            self.scheduler.set_timesteps(self.conf.num_timesteps, device=self.device)
+            timesteps, num_inference_steps = self.get_timesteps(self.conf.num_timesteps, strength)
+            
+            processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
+            
+            if self.conf.use_depth:
+                depth = self.init_depth(depth)
+            
+            # Encode Prompt
+            input_ids = self.tokenizer(
+                    [prompt],
+                    padding="max_length",
+                    truncation=True,
+                    max_length=self.tokenizer.model_max_length,
+                    return_tensors="pt",
+                )
+
+            cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
+
+            extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
+
+            if save_denoising_steps:
+                denoising_steps = {
+                    'opt': [],
+                    'post-opt': [],
+                }
+            
+            # create guidance weight schedule
+            denoising_weight_schedule = []
+            for t_idx in range(38):
+                if t_idx % 3 == 0:
+                    denoising_weight_schedule.append((t_idx, [0.0, 0.0, 7.5], [0.0, 0.0, 1.5]))
+                elif t_idx % 3 == 1:
+                    denoising_weight_schedule.append((t_idx, [0.0, 5.0, 0.0], [0.0, 1.5, 0.0]))
+                elif t_idx % 3 == 2:
+                    denoising_weight_schedule.append((t_idx, [0.0, 5.0, 7.5], [0.0, 1.5, 1.5]))
+            denoising_weight_schedule.append((38, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+            optimization_weight_schedule = [
+                (0, [2.5, 2.5, 2.5], [1.25, 1.25, 1.25]),
+                (1, [1.25, 1.25, 1.25], [2.5, 2.5, 2.5]),
+                (2, [1.25, 1.25, 1.25], [1.25, 1.25, 1.25]),
+                (3, [2.5, 2.5, 2.5], [2.5, 2.5, 2.5]),
+            ]
+            guidance_weight_schedule = StepGuidanceWeightSchedule(
+                denoising_steps=denoising_weight_schedule,
+                optimization_steps=optimization_weight_schedule,
+                fg_scaling=fg_weight*30.0,
+                bg_scaling=bg_weight*30.0
             )
-
-        cond_embeddings = self.text_encoder(input_ids.input_ids.to(self.device))[0]
-
-        extra_step_kwargs = self.prepare_extra_step_kwargs(generator, 0.0)
-
-        loss = torch.tensor(10000)
-        # timestep_num = 0
         
-        if save_denoising_steps:
-            denoising_steps = {
-                'opt': [],
-                'post-opt': [],
-            }
-        
-        activations_orig, activations2_orig, activations3_orig = activations_orig[0], activations_orig[1], activations_orig[2]
-        
+        # latents = latents.requires_grad_(True)
+
         for t_idx, t in enumerate(tqdm(timesteps)):
-            iteration = 0
-            # attention_map_orig = attention_maps_orig[timestep_num]
-            activation_orig = activations_orig[t_idx]
-            activation2_orig = activations2_orig[t_idx]
-            activation3_orig = activations3_orig[t_idx]
+            
             torch.set_grad_enabled(True)
+            # with torch.enable_grad():
+            latents = latents.requires_grad_(True)
 
-            activations_size = (activation3_orig.shape[-2], activation3_orig.shape[-1])
+            activations_size = (activations_orig[2][t_idx].shape[-2], activations_orig[2][t_idx].shape[-1])
 
             if save_denoising_steps:
                 denoising_steps['opt'].append([])
                         
-            while iteration < 3 and (t_idx < 38 and t_idx >= 0):
-                
+            # opt = torch.optim.Adam(params=[latents], lr=0.01)
+            opt = torch.optim.SGD(params=[latents], lr=0.1)
+
+            iteration = 0
+            while iteration < self.conf.num_optsteps and t_idx < 38:
+
+                # latents = latents.requires_grad_(True)
                 latent_model_input = latents
-                latents = latents.requires_grad_(True)
 
                 latent_model_input = self.scheduler.scale_model_input(latent_model_input, t)
                 if self.conf.use_depth:
@@ -375,100 +390,41 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 )
                     
                 noise_pred = unet_output[0]
-                # attn_map_integrated_up = unet_output[1]
-                # attn_map_integrated_mid = unet_output[2]
-                # attn_map_integrated_down = unet_output[3]
-                activations = unet_output[4]
-                activations2 = unet_output[5]
-                activations3 = unet_output[6]
+                activations = [unet_output[4], unet_output[5], unet_output[6]]
 
-                # loss = 0
+                fgw, bgw = guidance_weight_schedule(t_idx, iteration)
+
+                loss = 0.0
+                for act_idx in range(len(activations_orig)):
+                    if fgw != 0.0:
+                        loss += fgw[act_idx] * compute_foreground_loss(
+                            activations=activations[act_idx][0], activations_orig=activations_orig[act_idx][t_idx],
+                            processed_correspondences=processed_correspondences,
+                            patch_size=self.conf.fg_patch_size, activations_size=activations_size)
+                    if bgw != 0.0:
+                        loss += bgw[act_idx] * compute_background_loss(
+                            activations=activations[act_idx][0], activations_orig=activations_orig[act_idx][t_idx],
+                            processed_correspondences=processed_correspondences,
+                            patch_size=self.conf.bg_patch_size, activations_size=activations_size, loss_type=self.conf.bg_loss_type)
+
+                # if(loss == 0):
+                #     grad_cond = 0
+                # else:
+                #     grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
+                # latents = latents - grad_cond * 0.1
+
+                if loss != 0:
+                    opt.zero_grad()
+                    loss.backward()
+                    opt.step()
                 
-                if(t_idx >= 0):
-                    appearance_loss = 0.0
-                    bg_loss = 0.0
-                    if(t_idx % 3 == 0):
-                        appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
-                            activations=activations3[0], activations_orig=activation3_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
-                        bg_loss += 1.5 * compute_background_loss(
-                            activations=activations3[0],
-                            activations_orig=activation3_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
-
-                    if(t_idx % 3 == 1):
-                        appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
-                            activations=activations2[0], activations_orig=activation2_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
-                        bg_loss += 1.5 * compute_background_loss(
-                            activations=activations2[0], activations_orig=activation2_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
-
-                    if(t_idx % 3 == 2):
-                        appearance_loss += 5.0 * compute_localized_transformed_appearance_loss(
-                            activations=activations2[0], activations_orig=activation2_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=5, attn_layer_high=6, patch_size=1, activations_size=activations_size)
-                        appearance_loss += 7.5 * compute_localized_transformed_appearance_loss(
-                            activations=activations3[0], activations_orig=activation3_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
-                        bg_loss += 1.5 * compute_background_loss(
-                            activations=activations3[0], activations_orig=activation3_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=6, attn_layer_high=7, activations_size=activations_size)
-                        bg_loss += 1.5 * compute_background_loss(
-                            activations=activations2[0], activations_orig=activation2_orig,
-                            processed_correspondences=processed_correspondences,
-                            attn_layer_low=5, attn_layer_high=6, activations_size=activations_size)
-                else:
-                    appearance_loss = 0.1 * compute_localized_transformed_appearance_loss(
-                        activations=activations3[0], activations_orig=activation3_orig,
-                        attn_layer_low=6, attn_layer_high=7, patch_size=1, activations_size=activations_size)
-
-                if(iteration == 0):
-                    app_wt = 2.5
-                    bg_wt = 1.25
-                if(iteration == 1):
-                    app_wt = 1.25
-                    bg_wt = 2.5   
-                if(iteration == 2):
-                    app_wt = 1.25
-                    bg_wt = 1.25
-                if(iteration == 3):
-                    app_wt = 2.5
-                    bg_wt = 2.5
-
-                # print('bg loss')
-                # print(bg_loss)
-
-                # print('appearance loss')
-                # print(appearance_loss)
-
-                loss = 30.0 * (fg_weight*app_wt*appearance_loss + bg_weight*bg_wt*bg_loss)
-
-                # loss *= 30
-
-                if(loss == 0):
-                    grad_cond = 0
-                else:
-                    grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
-                            
-                var = 0.1 
-                latents = latents - 1.0 * grad_cond * var
                 iteration += 1
-                torch.cuda.empty_cache()
+                # torch.cuda.empty_cache()
 
-                if save_denoising_steps:
-                    with torch.no_grad():
-                        # image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-                        # image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-                        image = self.decode_latent_image(latents)
-                        denoising_steps['opt'][-1].append(image.detach().cpu())
+            if save_denoising_steps:
+                with torch.no_grad():
+                    image = self.decode_latent_image(latents.detach())
+                    denoising_steps['opt'][-1].append(image.cpu())
                 
             torch.set_grad_enabled(False)            
             with torch.no_grad():
@@ -499,11 +455,8 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 torch.cuda.empty_cache()
 
                 if save_denoising_steps:
-                    # image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
-                    # image = VaeImageProcessor(vae_scale_factor=self.vae.config.scaling_factor).postprocess(image, output_type="pt")
-                    image = self.decode_latent_image(latents)
-                    denoising_steps['post-opt'].append(image.detach().cpu())
-            # timestep_num += 1
+                    image = self.decode_latent_image(latents.detach())
+                    denoising_steps['opt'][-1].append(image.cpu())
                     
         with torch.no_grad():
             image = self.vae.decode(latents / self.vae.config.scaling_factor, return_dict=False)[0]
@@ -549,7 +502,6 @@ class GuidedStableDiffuser(GuidedDiffuser):
         original_x, original_y, transformed_x, transformed_y = (
             np.array(visible_orig_x), np.array(visible_orig_y), np.array(visible_trans_x), np.array(visible_trans_y))
 
-        # original_x, original_y, transformed_x, transformed_y = load_positions(scene_dir + 'positions.npy')
         original_x, original_y = original_x // (img_res // 64), original_y // (img_res // 64)
         transformed_x, transformed_y = transformed_x // (img_res // 64), transformed_y // (img_res // 64)
 
@@ -563,33 +515,33 @@ class GuidedStableDiffuser(GuidedDiffuser):
         all_pixels = {(x, y) for x in range(64) for y in range(64)}
 
         # Find pixels not in either of the original or transformed sets
-        remaining_pixels = all_pixels - (original_pixels | transformed_pixels)
+        bg_pixels = all_pixels - (original_pixels | transformed_pixels)
 
-        # Extract remaining_x and remaining_y
-        remaining_x = np.array([x for x, y in remaining_pixels])
-        remaining_y = np.array([y for x, y in remaining_pixels])
+        # Extract background_x and background_y
+        bg_x = np.array([x for x, y in bg_pixels])
+        bg_y = np.array([y for x, y in bg_pixels])
 
-        remaining_pixels_orig = all_pixels - (original_pixels)
+        bg_pixels_orig = all_pixels - (original_pixels)
 
-        remaining_x_orig = np.array([x for x, y in remaining_pixels_orig])
-        remaining_y_orig = np.array([y for x, y in remaining_pixels_orig])
+        bg_x_orig = np.array([x for x, y in bg_pixels_orig])
+        bg_y_orig = np.array([y for x, y in bg_pixels_orig])
 
-        remaining_pixels_trans = all_pixels - (transformed_pixels)
+        bg_pixels_trans = all_pixels - (transformed_pixels)
 
-        remaining_x_trans = np.array([x for x, y in remaining_pixels_trans])
-        remaining_y_trans = np.array([y for x, y in remaining_pixels_trans])
+        bg_x_trans = np.array([x for x, y in bg_pixels_trans])
+        bg_y_trans = np.array([y for x, y in bg_pixels_trans])
 
         processed_correspondences = {
             'original_x': original_x,
             'original_y': original_y,
             'transformed_x': transformed_x,
             'transformed_y': transformed_y,
-            'remaining_x': remaining_x,
-            'remaining_y': remaining_y,
-            'remaining_x_orig': remaining_x_orig,
-            'remaining_y_orig': remaining_y_orig,
-            'remaining_x_trans': remaining_x_trans,
-            'remaining_y_trans': remaining_y_trans,
+            'background_x': bg_x,
+            'background_y': bg_y,
+            'background_x_orig': bg_x_orig,
+            'background_y_orig': bg_y_orig,
+            'background_x_trans': bg_x_trans,
+            'background_y_trans': bg_y_trans,
         }
 
         return processed_correspondences
@@ -620,89 +572,61 @@ class GuidedStableDiffuser(GuidedDiffuser):
             extra_step_kwargs["generator"] = generator
         return extra_step_kwargs
 
-def retrieve_attention_maps(attn_down, attn_mid, attn_up, obj_idx, object_positions, img_dims):
-    
-    attn_maps = [] 
-    
-    for i in range(len(attn_down)):
-        attn_map = 0
+class GuidanceWeightSchedule:
 
-        for attn_map_integrated in attn_down[i]:
-            attn_map += attn_map_integrated
-    
-        attn_map /= len(attn_down[i])
-        b, i, j = attn_map.shape
-        H = W = int(math.sqrt(i))
+    def __init__(self):
+        pass
+
+    def __call__(self, denoising_step: int, optimization_step: int):
+        fg_weights = [1.0]*3
+        bg_weights = [1.0]*3
+        return fg_weights, bg_weights
+
+class StepGuidanceWeightSchedule(GuidanceWeightSchedule):
+
+    def __init__(
+            self,
+            denoising_steps: list[(int, list[float], list[float])],
+            optimization_steps: list[(int, list[float], list[float])],
+            fg_scaling: float = 1.0, bg_scaling: float = 1.0):
+
+        super().__init__()
         
-        ca_map_obj = 0
-        for object_position in object_positions[obj_idx]:
-            ca_map_obj += attn_map[:,:,object_position].reshape(b,H,W)
+        if not all(len(fg_weights) == len(bg_weights) for _, fg_weights, bg_weights in denoising_steps):
+            raise ValueError("Number of foreground and background weights do not match.")
+        if not all(len(fg_weights) == len(bg_weights) for _, fg_weights, bg_weights in optimization_steps):
+            raise ValueError("Number of foreground and background weights do not match.")
+        if len(denoising_steps[0][1]) != len(optimization_steps[0][1]):
+            raise ValueError("Number of denoising and optimization weights do not match.")
 
-        ca_map_obj = ca_map_obj.mean(axis = 0)
-        ca_map_obj = normalize_attn_torch(ca_map_obj)
-        ca_map_obj = ca_map_obj.view(1, 1, H, W)
-        #m = torch.nn.Upsample(scale_factor=img_dims / H, mode='nearest')
-        #ca_map_obj = m(ca_map_obj)
-        ca_map_obj = torch.nn.functional.interpolate(ca_map_obj, (img_dims, img_dims), mode = 'bilinear')
-        attn_maps.append(ca_map_obj[0][0])
+        self.denoising_steps = sorted(denoising_steps, key=lambda step: step[0])
+        self.optimization_steps = sorted(optimization_steps, key=lambda step: step[0])
+        self.fg_scaling = fg_scaling
+        self.bg_scaling = bg_scaling
 
-    attn_map = 0
-
-    for attn_map_integrated in attn_mid:
-        attn_map += attn_map_integrated
-    
-    attn_map /= len(attn_mid)
-    b, i, j = attn_map.shape
-    H = W = int(math.sqrt(i))
-
-    ca_map_obj = 0
-    
-    for object_position in object_positions[obj_idx]:
-        ca_map_obj += attn_map[:,:,object_position].reshape(b,H,W)
-
-    ca_map_obj = ca_map_obj.mean(axis = 0)
-    ca_map_obj = normalize_attn_torch(ca_map_obj)
-    ca_map_obj = ca_map_obj.view(1, 1, H, W)
-    ca_map_obj = torch.nn.functional.interpolate(ca_map_obj, (img_dims, img_dims), mode = 'bilinear')    
-    #m = torch.nn.Upsample(scale_factor=img_dims / H, mode='nearest')
-    #ca_map_obj = m(ca_map_obj)
-
-    attn_maps.append(ca_map_obj[0][0])
-    
-    for i in range(len(attn_up)):
-        attn_map = 0
-
-        for attn_map_integrated in attn_up[i]:
-            attn_map += attn_map_integrated
-    
-        attn_map /= len(attn_up[i])
-        b, i, j = attn_map.shape
-        H = W = int(math.sqrt(i))
-
-        ca_map_obj = 0
-        for object_position in object_positions[obj_idx]:
-            ca_map_obj += attn_map[:,:,object_position].reshape(b,H,W)
-
-        ca_map_obj = ca_map_obj.mean(axis = 0)
-        ca_map_obj = normalize_attn_torch(ca_map_obj)
-        ca_map_obj = ca_map_obj.view(1, 1, H, W)
-        ca_map_obj = torch.nn.functional.interpolate(ca_map_obj, (img_dims, img_dims), mode = 'bilinear')        
-        #m = torch.nn.Upsample(scale_factor=img_dims / H, mode='nearest')
-        #ca_map_obj = m(ca_map_obj)
-        attn_maps.append(ca_map_obj[0][0])
+    def __call__(self, denoising_step: int, optimization_step: int):
         
-    return attn_maps
+        denoising_fg_weights = None
+        denoising_bg_weights = None
+        optimization_fg_weights = None
+        optimization_bg_weights = None
+        
+        for step, fg_weights, bg_weights in reversed(self.denoising_steps):
+            if denoising_step >= step:
+                denoising_fg_weights = fg_weights
+                denoising_bg_weights = bg_weights
+                break
+        for step, fg_weights, bg_weights in reversed(self.optimization_steps):
+            if optimization_step >= step:
+                optimization_fg_weights = fg_weights
+                optimization_bg_weights = bg_weights
+                break
 
-def phrase_to_index(prompt, phrases):
-    phrases = [x.strip() for x in phrases]
-    prompt_list = prompt.strip('.').split(' ')
-    object_positions = []
-    for obj in phrases:
-        obj_position = []
-        for word in obj.split(' '):
-            obj_first_index = prompt_list.index(word) + 1
-            obj_position.append(obj_first_index)
-        object_positions.append(obj_position)
+        if any(weight is None for weight in [denoising_fg_weights, denoising_bg_weights, optimization_fg_weights, optimization_bg_weights]):
+            raise ValueError(f"Could not find weights for denoising step {denoising_step} and optimization step {optimization_step}.")
 
-    return object_positions
-
+        fg_weights = [dw * ow * self.fg_scaling for dw, ow in zip(denoising_fg_weights, optimization_fg_weights)]
+        bg_weights = [dw * ow * self.bg_scaling for dw, ow in zip(denoising_bg_weights, optimization_bg_weights)]
+        
+        return fg_weights, bg_weights
+    
