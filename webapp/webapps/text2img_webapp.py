@@ -8,7 +8,7 @@ class Text2imgWebapp(GradioWebapp):
     def __init__(self, netpath: str, port: int):
         super().__init__(netpath, port)
 
-    def run_text2img(self, prompt: str = None) -> npt.NDArray:
+    def generate_image(self, prompt: str = None) -> npt.NDArray:
         raise NotImplementedError
 
     def build_gradio_app(self):
@@ -22,7 +22,7 @@ class Text2imgWebapp(GradioWebapp):
                     gr_generated_image = gr.Image(label="Edited Image")
 
             generate_button.click(
-                self.run_text2img,
+                self.generate_image,
                 inputs=[gr_text_prompt],
                 outputs=[gr_generated_image])
 

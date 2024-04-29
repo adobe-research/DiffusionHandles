@@ -36,7 +36,7 @@ class StablediffText2imgWebapp(Text2imgWebapp):
         # self.diffuser.scheduler = DDIMScheduler(self.diffuser.scheduler.config)
         self.diffuser = self.diffuser.to(device)
 
-    def run_text2img(self, prompt: str = None) -> npt.NDArray:
+    def generate_image(self, prompt: str = None) -> npt.NDArray:
 
         print('run_text2img')
 

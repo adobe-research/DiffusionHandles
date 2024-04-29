@@ -2,7 +2,7 @@ import pathlib
 
 import torch
 import scipy.ndimage
-from omegaconf import OmegaConf
+from omegaconf import OmegaConf, DictConfig
 
 from diffhandles.stable_null_inverter import StableNullInverter
 from diffhandles.guided_stable_diffuser import GuidedStableDiffuser
@@ -12,12 +12,12 @@ from diffhandles.utils import solve_laplacian_depth
 
 class DiffusionHandles:
 
-    def __init__(self, conf_path=None):
+    def __init__(self, conf: DictConfig=None):
 
-        if conf_path is None:
-            conf_path = f'{pathlib.Path(__file__).parent.resolve()}/config/default.yaml'
+        if conf is None:
+            conf = OmegaConf.load(f'{pathlib.Path(__file__).parent.resolve()}/config/default.yaml')
         
-        self.conf = OmegaConf.load(conf_path)
+        self.conf = conf
 
         self.diffuser = GuidedStableDiffuser(conf=self.conf.guided_diffuser)
         self.inverter = StableNullInverter(self.diffuser)

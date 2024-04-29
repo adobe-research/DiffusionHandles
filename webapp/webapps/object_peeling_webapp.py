@@ -1,4 +1,3 @@
-import sys
 import argparse
 import requests
 
@@ -7,21 +6,18 @@ import numpy.typing as npt
 import numpy as np
 import scipy
 from PIL import Image
-import gradio as gr
-from fastapi import FastAPI
-import uvicorn
 
+from foreground_remover_webapp import ForegroundRemoverWebapp
 from utils import crop_and_resize
 
-class ObjectPeelingWebapp:
+class ObjectPeelingWebapp(ForegroundRemoverWebapp):
     def __init__(self, netpath: str, port: int, server_url: str):
-        self.netpath = netpath
-        self.port = port
+        super().__init__(netpath=netpath, port=port)
+        
         self.img_res = 512
         self.server_url = server_url
 
-
-    def run_object_peeling(self, img: npt.NDArray = None, fg_mask: npt.NDArray = None, dilation: int = 3):
+    def remove_foreground(self, img: npt.NDArray = None, fg_mask: npt.NDArray = None, dilation: int = 3):
 
         print('run_object_peeling')
 
@@ -81,38 +77,6 @@ class ObjectPeelingWebapp:
         print(bg_img.shape)
 
         return bg_img
-
-    def build_gradio_app(self):
-
-        with gr.Blocks() as gr_app:
-            with gr.Row():
-                with gr.Column():
-                    gr_input_image = gr.Image(label="Input Image")
-                    gr_fg_mask = gr.Image(label="Foreground Mask")
-                    gr_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=3, minimum=0, maximum=100)
-                    generate_button = gr.Button("Submit")
-                with gr.Column():
-                    gr_bg = gr.Image(label="Background")
-
-            generate_button.click(
-                self.run_object_peeling,
-                inputs=[gr_input_image, gr_fg_mask, gr_dilation],
-                outputs=[gr_bg])
-
-        return gr_app
-
-    def start(self):
-
-        gr_app = self.build_gradio_app()
-        gr_app = gr_app.queue()
-
-        app = FastAPI()
-        app = gr.mount_gradio_app(app, gr_app, path=self.netpath)
-
-        try:
-            uvicorn.run(app, host="0.0.0.0", port=self.port)
-        except KeyboardInterrupt:
-            sys.exit()
 
 def parse_args():
     parser = argparse.ArgumentParser()

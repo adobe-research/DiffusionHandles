@@ -22,7 +22,7 @@ class ZoeDepthWebapp(DepthEstimatorWebapp):
         self.depth_estimator = build_model(conf)
         self.depth_estimator.to(device)
 
-    def run_zoe_depth(self, img: npt.NDArray = None) -> npt.NDArray:
+    def estimate_depth(self, img: npt.NDArray = None) -> npt.NDArray:
 
         print('run_zoe_depth')
 

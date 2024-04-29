@@ -7,7 +7,7 @@ class ForegroundSelectorWebapp(GradioWebapp):
     def __init__(self, netpath: str, port: int):
         super().__init__(netpath, port)
 
-    def run_langsam_segmenter(self, img: npt.NDArray = None, prompt: str = None):
+    def select_foreground(self, img: npt.NDArray = None, prompt: str = None):
         raise NotImplementedError
 
     def build_gradio_app(self):
@@ -22,7 +22,7 @@ class ForegroundSelectorWebapp(GradioWebapp):
                     gr_bg = gr.Image(label="Background")
 
             generate_button.click(
-                self.run_langsam_segmenter,
+                self.select_foreground,
                 inputs=[gr_input_image, gr_segment_prompt],
                 outputs=[gr_bg])
 

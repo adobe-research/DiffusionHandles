@@ -12,6 +12,7 @@ from diffusers.configuration_utils import FrozenDict
 from diffusers.utils import deprecate
 from diffusers.utils.torch_utils import randn_tensor
 from tqdm import tqdm
+import scipy.ndimage
 
 from diffhandles.model.unet_2d_condition import UNet2DConditionModel # this is the custom UNet that can also return intermediate activations and attentions
 from diffhandles.guided_diffuser import GuidedDiffuser
@@ -332,15 +333,35 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 }
             
             # create guidance weight schedule
+            fg_weight *= 30
+            bg_weight *= 30
             denoising_weight_schedule = []
-            for t_idx in range(38):
+            if self.conf.guidance_schedule_type == "constant":
+                fg_weight_falloff = np.linspace(fg_weight, fg_weight, self.conf.guidance_max_step)
+                bg_weight_falloff = np.linspace(bg_weight, bg_weight, self.conf.guidance_max_step)
+            elif self.conf.guidance_schedule_type == "linear":
+                fg_weight_falloff = np.linspace(fg_weight, 0.0, self.conf.guidance_max_step)
+                bg_weight_falloff = np.linspace(bg_weight, 0.0, self.conf.guidance_max_step)
+            elif self.conf.guidance_schedule_type == "quadratic":
+                fg_weight_falloff = np.linspace(np.sqrt(fg_weight), 0.0, self.conf.guidance_max_step)**2
+                bg_weight_falloff = np.linspace(np.sqrt(bg_weight), 0.0, self.conf.guidance_max_step)**2
+            else:
+                raise ValueError(f"Unknown guidance schedule type: {self.conf.guidance_schedule_type}")
+            for t_idx in range(self.conf.guidance_max_step):
                 if t_idx % 3 == 0:
-                    denoising_weight_schedule.append((t_idx, [0.0, 0.0, 7.5], [0.0, 0.0, 1.5]))
+                    fg_weights = [0.0, 0.0, 7.5]
+                    bg_weights = [0.0, 0.0, 1.5]
                 elif t_idx % 3 == 1:
-                    denoising_weight_schedule.append((t_idx, [0.0, 5.0, 0.0], [0.0, 1.5, 0.0]))
+                    fg_weights = [0.0, 5.0, 0.0]
+                    bg_weights = [0.0, 1.5, 0.0]
                 elif t_idx % 3 == 2:
-                    denoising_weight_schedule.append((t_idx, [0.0, 5.0, 7.5], [0.0, 1.5, 1.5]))
-            denoising_weight_schedule.append((38, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
+                    fg_weights = [0.0, 5.0, 7.5]
+                    bg_weights = [0.0, 1.5, 1.5]
+                denoising_weight_schedule.append((
+                    t_idx,
+                    (np.array(fg_weights)*fg_weight_falloff[t_idx]).tolist(),
+                    (np.array(bg_weights)*bg_weight_falloff[t_idx]).tolist()))
+            denoising_weight_schedule.append((self.conf.guidance_max_step, [0.0, 0.0, 0.0], [0.0, 0.0, 0.0]))
             optimization_weight_schedule = [
                 (0, [2.5, 2.5, 2.5], [1.25, 1.25, 1.25]),
                 (1, [1.25, 1.25, 1.25], [2.5, 2.5, 2.5]),
@@ -349,10 +370,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
             ]
             guidance_weight_schedule = StepGuidanceWeightSchedule(
                 denoising_steps=denoising_weight_schedule,
-                optimization_steps=optimization_weight_schedule,
-                fg_scaling=fg_weight*30.0,
-                bg_scaling=bg_weight*30.0
-            )
+                optimization_steps=optimization_weight_schedule)
         
         # latents = latents.requires_grad_(True)
 
@@ -368,11 +386,13 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 denoising_steps['opt'].append([])
                         
             # opt = torch.optim.Adam(params=[latents], lr=0.01)
-            opt = torch.optim.SGD(params=[latents], lr=0.1)
+            # opt = torch.optim.SGD(params=[latents], lr=0.1)
 
             iteration = 0
-            while iteration < self.conf.num_optsteps and t_idx < 38:
+            while iteration < self.conf.num_optsteps and t_idx < self.conf.guidance_max_step:
 
+                # latents = latents.detach().requires_grad_(True)
+                
                 # latents = latents.requires_grad_(True)
                 latent_model_input = latents
 
@@ -407,16 +427,16 @@ class GuidedStableDiffuser(GuidedDiffuser):
                             processed_correspondences=processed_correspondences,
                             patch_size=self.conf.bg_patch_size, activations_size=activations_size, loss_type=self.conf.bg_loss_type)
 
-                # if(loss == 0):
-                #     grad_cond = 0
-                # else:
-                #     grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
-                # latents = latents - grad_cond * 0.1
+                if(loss == 0):
+                    grad_cond = 0
+                else:
+                    grad_cond = torch.autograd.grad(loss.requires_grad_(True), [latents])[0]
+                latents = latents - grad_cond * 0.1
 
-                if loss != 0:
-                    opt.zero_grad()
-                    loss.backward()
-                    opt.step()
+                # if loss != 0:
+                #     opt.zero_grad()
+                #     loss.backward()
+                #     opt.step()
                 
                 iteration += 1
                 # torch.cuda.empty_cache()
@@ -477,9 +497,9 @@ class GuidedStableDiffuser(GuidedDiffuser):
         transformed_x = transformed_x.squeeze()
         transformed_y = transformed_y.squeeze()
         
-        original_mask = np.zeros((img_res, img_res))
+        bg_mask_orig = np.zeros((img_res, img_res))
         
-        transformed_mask = np.zeros((img_res, img_res))
+        bg_mask_trans = np.zeros((img_res, img_res))
         
         visible_orig_x = []
         visible_orig_y = []
@@ -494,10 +514,10 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 visible_trans_y.append(ty)
         
         for x, y in zip(visible_orig_x, visible_orig_y):
-            original_mask[y,x] = 1
+            bg_mask_orig[y,x] = 1
 
         for x, y in zip(visible_trans_x, visible_trans_y):
-            transformed_mask[y,x] = 1        
+            bg_mask_trans[y,x] = 1        
         
         original_x, original_y, transformed_x, transformed_y = (
             np.array(visible_orig_x), np.array(visible_orig_y), np.array(visible_trans_x), np.array(visible_trans_y))
@@ -505,31 +525,44 @@ class GuidedStableDiffuser(GuidedDiffuser):
         original_x, original_y = original_x // (img_res // 64), original_y // (img_res // 64)
         transformed_x, transformed_y = transformed_x // (img_res // 64), transformed_y // (img_res // 64)
 
-        bg_original_x, bg_original_y, bg_transformed_x, bg_transformed_y = original_x, original_y, transformed_x, transformed_y
+        bg_mask_orig = np.ones(shape=[64, 64], dtype=np.bool_)
+        bg_mask_orig[original_y, original_x] = False
 
-        # Create sets for original and transformed pixels
-        original_pixels = set(zip(bg_original_x, bg_original_y))
-        transformed_pixels = set(zip(bg_transformed_x, bg_transformed_y))
+        bg_mask_trans = np.ones(shape=[64, 64], dtype=np.bool_)
+        bg_mask_trans[transformed_y, transformed_x] = False
 
-        # Create a set of all pixels in a 64x64 image
-        all_pixels = {(x, y) for x in range(64) for y in range(64)}
+        bg_mask_orig = scipy.ndimage.binary_erosion(bg_mask_orig, iterations=15)
+        bg_mask_trans = scipy.ndimage.binary_erosion(bg_mask_trans, iterations=15)
 
-        # Find pixels not in either of the original or transformed sets
-        bg_pixels = all_pixels - (original_pixels | transformed_pixels)
+        bg_y, bg_x = np.nonzero(bg_mask_orig & bg_mask_trans)
+        bg_y_orig, bg_x_orig = np.nonzero(bg_mask_orig)
+        bg_y_trans, bg_x_trans = np.nonzero(bg_mask_trans)
 
-        # Extract background_x and background_y
-        bg_x = np.array([x for x, y in bg_pixels])
-        bg_y = np.array([y for x, y in bg_pixels])
+        
+        
+        # # Create sets for original and transformed pixels
+        # original_pixels = set(zip(original_x, original_y))
+        # transformed_pixels = set(zip(transformed_x, transformed_y))
 
-        bg_pixels_orig = all_pixels - (original_pixels)
+        # # Create a set of all pixels in a 64x64 image
+        # all_pixels = {(x, y) for x in range(64) for y in range(64)}
 
-        bg_x_orig = np.array([x for x, y in bg_pixels_orig])
-        bg_y_orig = np.array([y for x, y in bg_pixels_orig])
+        # # Find pixels not in either of the original or transformed sets
+        # bg_pixels = all_pixels - (original_pixels | transformed_pixels)
 
-        bg_pixels_trans = all_pixels - (transformed_pixels)
+        # # Extract background_x and background_y
+        # bg_x = np.array([x for x, y in bg_pixels])
+        # bg_y = np.array([y for x, y in bg_pixels])
 
-        bg_x_trans = np.array([x for x, y in bg_pixels_trans])
-        bg_y_trans = np.array([y for x, y in bg_pixels_trans])
+        # bg_pixels_orig = all_pixels - (original_pixels)
+
+        # bg_x_orig = np.array([x for x, y in bg_pixels_orig])
+        # bg_y_orig = np.array([y for x, y in bg_pixels_orig])
+
+        # bg_pixels_trans = all_pixels - (transformed_pixels)
+
+        # bg_x_trans = np.array([x for x, y in bg_pixels_trans])
+        # bg_y_trans = np.array([y for x, y in bg_pixels_trans])
 
         processed_correspondences = {
             'original_x': original_x,
@@ -587,8 +620,7 @@ class StepGuidanceWeightSchedule(GuidanceWeightSchedule):
     def __init__(
             self,
             denoising_steps: list[(int, list[float], list[float])],
-            optimization_steps: list[(int, list[float], list[float])],
-            fg_scaling: float = 1.0, bg_scaling: float = 1.0):
+            optimization_steps: list[(int, list[float], list[float])]):
 
         super().__init__()
         
@@ -601,8 +633,6 @@ class StepGuidanceWeightSchedule(GuidanceWeightSchedule):
 
         self.denoising_steps = sorted(denoising_steps, key=lambda step: step[0])
         self.optimization_steps = sorted(optimization_steps, key=lambda step: step[0])
-        self.fg_scaling = fg_scaling
-        self.bg_scaling = bg_scaling
 
     def __call__(self, denoising_step: int, optimization_step: int):
         
@@ -625,8 +655,8 @@ class StepGuidanceWeightSchedule(GuidanceWeightSchedule):
         if any(weight is None for weight in [denoising_fg_weights, denoising_bg_weights, optimization_fg_weights, optimization_bg_weights]):
             raise ValueError(f"Could not find weights for denoising step {denoising_step} and optimization step {optimization_step}.")
 
-        fg_weights = [dw * ow * self.fg_scaling for dw, ow in zip(denoising_fg_weights, optimization_fg_weights)]
-        bg_weights = [dw * ow * self.bg_scaling for dw, ow in zip(denoising_bg_weights, optimization_bg_weights)]
+        fg_weights = [dw * ow for dw, ow in zip(denoising_fg_weights, optimization_fg_weights)]
+        bg_weights = [dw * ow for dw, ow in zip(denoising_bg_weights, optimization_bg_weights)]
         
         return fg_weights, bg_weights
     

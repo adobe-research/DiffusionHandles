@@ -23,7 +23,7 @@ class LangSAMSegmenterWebapp(ForegroundSelectorWebapp):
         self.segmenter.sam.model.to(device)
         self.segmenter.device = device
 
-    def run_langsam_segmenter(self, img: npt.NDArray = None, prompt: str = None):
+    def select_foreground(self, img: npt.NDArray = None, prompt: str = None):
 
         print('run_langsam_segmenter')
 

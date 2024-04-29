@@ -12,7 +12,7 @@ class DepthEstimatorWebapp(GradioWebapp):
     def __init__(self, netpath: str, port: int):
         super().__init__(netpath, port)
 
-    def run_zoe_depth(self, img: npt.NDArray = None) -> npt.NDArray:
+    def estimate_depth(self, img: npt.NDArray = None) -> npt.NDArray:
         raise NotImplementedError
 
     def build_gradio_app(self):
@@ -26,7 +26,7 @@ class DepthEstimatorWebapp(GradioWebapp):
                     gr_depth = HDRImage(label="Depth")
 
             generate_button.click(
-                self.run_zoe_depth,
+                self.estimate_depth,
                 inputs=[gr_input_image],
                 outputs=[gr_depth])
 

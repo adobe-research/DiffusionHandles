@@ -8,4 +8,6 @@ guided_diffuser:
   bg_loss_type: 'global_avg'
   num_timesteps: 50
   num_optsteps: 3
+  guidance_max_step: 38
+  guidance_schedule_type: 'constant'
   seed: 2773

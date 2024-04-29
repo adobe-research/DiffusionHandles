@@ -10,6 +10,7 @@ import numpy as np
 import numpy.typing as npt
 import gradio as gr
 from gradio_hdrimage import HDRImage
+from omegaconf import OmegaConf
 
 from diffhandles import DiffusionHandles
 from diffhandles.depth_transform import depth_to_mesh
@@ -26,7 +27,7 @@ class DiffhandlesWebapp(GradioWebapp):
         self.debug_images = debug_images
         self.return_meshes = return_meshes
         self.config_path = config_path
-        self.diff_handles = DiffusionHandles(conf_path=config_path)
+        self.diff_handles = DiffusionHandles(conf=OmegaConf.load(config_path))
         self.diff_handles.to(device)
         self.img_res = 512
 
@@ -158,8 +159,8 @@ class DiffhandlesWebapp(GradioWebapp):
             return None
 
         input_image_identity = np.load(input_image_identity_path)
-        inverted_null_text = torch.from_numpy(input_image_identity['null_text_emb']).to(device=self.diff_handles.device)
-        inverted_noise = torch.from_numpy(input_image_identity['init_noise']).to(device=self.diff_handles.device)
+        null_text_emb = torch.from_numpy(input_image_identity['null_text_emb']).to(device=self.diff_handles.device)
+        init_noise = torch.from_numpy(input_image_identity['init_noise']).to(device=self.diff_handles.device)
         activations = [torch.from_numpy(input_image_identity[f'activations{i+1}']).to(device=self.diff_handles.device) for i in range(3)]
 
         # prepare inputs (convert to torch tensors, etc.)
@@ -182,7 +183,7 @@ class DiffhandlesWebapp(GradioWebapp):
          ) = self.diff_handles.transform_foreground(
             depth=depth, prompt=prompt,
             fg_mask=fg_mask, bg_depth=bg_depth_harmonized,
-            null_text_emb=inverted_null_text, init_noise=inverted_noise,
+            null_text_emb=null_text_emb, init_noise=init_noise,
             activations=activations,
             rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
             fg_weight=fg_weight, bg_weight=bg_weight,
