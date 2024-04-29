@@ -10,4 +10,5 @@ guided_diffuser:
   num_optsteps: 3
   guidance_max_step: 38
   guidance_schedule_type: 'constant'
+  bg_erosion: 0
   seed: 2773

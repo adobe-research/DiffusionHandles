@@ -308,7 +308,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
             self.scheduler.set_timesteps(self.conf.num_timesteps, device=self.device)
             timesteps, num_inference_steps = self.get_timesteps(self.conf.num_timesteps, strength)
             
-            processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1])
+            processed_correspondences = self.process_correspondences(correspondences, img_res=depth.shape[-1], bg_erosion=self.conf.bg_erosion)
             
             if self.conf.use_depth:
                 depth = self.init_depth(depth)
@@ -487,7 +487,7 @@ class GuidedStableDiffuser(GuidedDiffuser):
         else:
             return image
 
-    def process_correspondences(self, correspondences, img_res):
+    def process_correspondences(self, correspondences, img_res, bg_erosion=0):
 
         original_x, original_y, transformed_x, transformed_y = unpack_correspondences(correspondences)
 
@@ -531,8 +531,9 @@ class GuidedStableDiffuser(GuidedDiffuser):
         bg_mask_trans = np.ones(shape=[64, 64], dtype=np.bool_)
         bg_mask_trans[transformed_y, transformed_x] = False
 
-        bg_mask_orig = scipy.ndimage.binary_erosion(bg_mask_orig, iterations=15)
-        bg_mask_trans = scipy.ndimage.binary_erosion(bg_mask_trans, iterations=15)
+        if bg_erosion > 0:
+            bg_mask_orig = scipy.ndimage.binary_erosion(bg_mask_orig, iterations=bg_erosion)
+            bg_mask_trans = scipy.ndimage.binary_erosion(bg_mask_trans, iterations=bg_erosion)
 
         bg_y, bg_x = np.nonzero(bg_mask_orig & bg_mask_trans)
         bg_y_orig, bg_x_orig = np.nonzero(bg_mask_orig)
