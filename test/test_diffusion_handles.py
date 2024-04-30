@@ -45,7 +45,8 @@ def test_diffusion_handles(
 
     preprocess_samples(input_dir=input_dir, dataset_names=dataset_names)
 
-    diff_handles = DiffusionHandles(conf=OmegaConf.load(config_path))
+    diff_handles_config = OmegaConf.load(config_path) if config_path is not None else None
+    diff_handles = DiffusionHandles(conf=diff_handles_config)
     diff_handles.to(device)
 
     # save config to output directory

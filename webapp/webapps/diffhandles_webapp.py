@@ -27,7 +27,8 @@ class DiffhandlesWebapp(GradioWebapp):
         self.debug_images = debug_images
         self.return_meshes = return_meshes
         self.config_path = config_path
-        self.diff_handles = DiffusionHandles(conf=OmegaConf.load(config_path))
+        diff_handles_config = OmegaConf.load(config_path) if config_path is not None else None
+        self.diff_handles = DiffusionHandles(conf=diff_handles_config)
         self.diff_handles.to(device)
         self.img_res = 512
 
@@ -120,7 +121,7 @@ class DiffhandlesWebapp(GradioWebapp):
         bg_depth = crop_and_resize(img=bg_depth, size=self.img_res)
 
         # set foreground
-        bg_depth = self.diff_handles.set_foreground_new(depth=depth, fg_mask=fg_mask, bg_depth=bg_depth)
+        bg_depth = self.diff_handles.set_foreground(depth=depth, fg_mask=fg_mask, bg_depth=bg_depth)
 
         if self.return_meshes:
             intrinsics = self.diff_handles.diffuser.get_depth_intrinsics(device=depth.device)

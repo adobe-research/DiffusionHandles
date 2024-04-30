@@ -689,10 +689,10 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                         )
             with gr.Row():
                 with gr.Column():
-                    gr_text_prompt = gr.Textbox(label="Image Prompt", value="a cube toy on the table")
+                    gr_text_prompt = gr.Textbox(label="Image Prompt", value="toy cubes on a table")
                     gr_generate_button = gr.Button("Generate Input Image")
                 with gr.Column():
-                    gr_input_image = gr.Image(label="Input Image", value="data/cube_toy/input.png")
+                    gr_input_image = gr.Image(label="Input Image", value="data/toy_cubes/input.png")
 
             # with gr.Row():
             #     gr.HTML(value="""
@@ -721,7 +721,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                     gr_fg_mask_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=6, minimum=0, maximum=100)
                     gr_object_button = gr.Button("Select Object")
                 with gr.Column():
-                    gr_fg_mask = gr.Image(label="Object Mask", value="data/cube_toy/mask.png")
+                    gr_fg_mask = gr.Image(label="Object Mask", value="data/toy_cubes/mask.png")
             with gr.Row():
                 gr_set_foreground_button = gr.Button("Process Object Selection")
             with gr.Row():
@@ -746,7 +746,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             with gr.Row():
                 with gr.Column():
                     gr_trans_x = gr.Number(label="Translation X (left, right)", value=-0.5, minimum=-100.0, maximum=100.0)
-                    gr_trans_y = gr.Number(label="Translation Y (up, down)", value=0.0, minimum=-100.0, maximum=100.0)
+                    gr_trans_y = gr.Number(label="Translation Y (up, down)", value=0.55, minimum=-100.0, maximum=100.0)
                     gr_trans_z = gr.Number(label="Translation Z (backward, forward)", value=0.0, minimum=-100.0, maximum=100.0)
                     # gr_rot_angle = gr.Slider(label="Rotation Angle", value=40.0, minimum=-180.0, maximum=180.0, step=1.0)
                     gr_rot_angle = gr.Slider(label="Rotation Angle", value=0.0, minimum=-180.0, maximum=180.0, step=1.0)

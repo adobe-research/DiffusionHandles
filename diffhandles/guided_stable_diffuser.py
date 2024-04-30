@@ -497,9 +497,9 @@ class GuidedStableDiffuser(GuidedDiffuser):
         transformed_x = transformed_x.squeeze()
         transformed_y = transformed_y.squeeze()
         
-        bg_mask_orig = np.zeros((img_res, img_res))
+        # bg_mask_orig = np.zeros((img_res, img_res))
         
-        bg_mask_trans = np.zeros((img_res, img_res))
+        # bg_mask_trans = np.zeros((img_res, img_res))
         
         visible_orig_x = []
         visible_orig_y = []
@@ -513,23 +513,26 @@ class GuidedStableDiffuser(GuidedDiffuser):
                 visible_trans_x.append(tx)
                 visible_trans_y.append(ty)
         
-        for x, y in zip(visible_orig_x, visible_orig_y):
-            bg_mask_orig[y,x] = 1
+        # for x, y in zip(visible_orig_x, visible_orig_y):
+        #     bg_mask_orig[y,x] = 1
 
-        for x, y in zip(visible_trans_x, visible_trans_y):
-            bg_mask_trans[y,x] = 1        
+        # for x, y in zip(visible_trans_x, visible_trans_y):
+        #     bg_mask_trans[y,x] = 1        
         
         original_x, original_y, transformed_x, transformed_y = (
-            np.array(visible_orig_x), np.array(visible_orig_y), np.array(visible_trans_x), np.array(visible_trans_y))
+            np.array(visible_orig_x, dtype=np.int64), np.array(visible_orig_y, dtype=np.int64),
+            np.array(visible_trans_x, dtype=np.int64), np.array(visible_trans_y, dtype=np.int64))
 
         original_x, original_y = original_x // (img_res // 64), original_y // (img_res // 64)
         transformed_x, transformed_y = transformed_x // (img_res // 64), transformed_y // (img_res // 64)
 
         bg_mask_orig = np.ones(shape=[64, 64], dtype=np.bool_)
-        bg_mask_orig[original_y, original_x] = False
+        if len(original_x) > 0:
+            bg_mask_orig[original_y, original_x] = False
 
         bg_mask_trans = np.ones(shape=[64, 64], dtype=np.bool_)
-        bg_mask_trans[transformed_y, transformed_x] = False
+        if len(transformed_x) > 0:
+            bg_mask_trans[transformed_y, transformed_x] = False
 
         if bg_erosion > 0:
             bg_mask_orig = scipy.ndimage.binary_erosion(bg_mask_orig, iterations=bg_erosion)
