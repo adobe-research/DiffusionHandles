@@ -27,7 +27,7 @@ class ZoeDepthWebapp(DepthEstimatorWebapp):
         print('run_zoe_depth')
 
         if img is None:
-            return None
+            raise ValueError('Some inputs are missing.')
 
         print(f'{img.shape} {img.dtype}')
 

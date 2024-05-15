@@ -1,0 +1,4 @@
+fg_removal_dilation: 16
+fg_weight: 1.5
+bg_weight: 1.25
+diffhandles_config: '../test/config/bg_erosion_10_local_avg.yaml'

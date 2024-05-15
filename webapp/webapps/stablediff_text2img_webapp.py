@@ -41,7 +41,7 @@ class StablediffText2imgWebapp(Text2imgWebapp):
         print('run_text2img')
 
         if prompt is None:
-            return None
+            raise ValueError('Some inputs are missing.')
 
         print(prompt)
 

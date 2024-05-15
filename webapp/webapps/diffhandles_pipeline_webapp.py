@@ -4,6 +4,7 @@ import argparse
 import tempfile
 import pathlib
 import time
+import json
 
 import numpy as np
 import numpy.typing as npt
@@ -14,6 +15,7 @@ from gradio_hdrimage import HDRImage
 import gradio_client
 import imageio.plugins as imageio_plugins
 import imageio.v3 as imageio
+from omegaconf import OmegaConf, DictConfig
 from diffhandles.depth_transform import transform_depth, depth_to_mesh
 from diffhandles.utils import solve_laplacian_depth
 from diffhandles.mesh_io import save_mesh
@@ -30,20 +32,25 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
 
     def __init__(
             self, netpath: str, port: int, text2img_url: str, foreground_selector_url: str, foreground_remover_url: str, depth_estimator_url: str, diffhandles_url: str,
-            timeout_seconds: float = None, debug_images: bool = False, return_meshes: bool = False, device: str = 'cuda:0'):
+            default_edit_path: str = None, timeout_seconds: float = None, debug_images: bool = False, return_meshes: bool = False, device: str = 'cuda:0'):
 
         super().__init__(netpath=netpath, port=port)
+
+        if default_edit_path is None:
+            default_edit_path = 'data/toy_cubes/edit_001'
 
         self.text2img_client = gradio_client.Client(text2img_url, upload_files=True, download_files=True)
         self.foreground_selector_client = gradio_client.Client(foreground_selector_url, upload_files=True, download_files=True)
         self.foreground_remover_client = gradio_client.Client(foreground_remover_url, upload_files=True, download_files=True)
         self.depth_estimator_client = gradio_client.Client(depth_estimator_url, upload_files=True, download_files=True)
         self.diffhandles_client = gradio_client.Client(diffhandles_url, upload_files=True, download_files=True)
+        self.default_edit_path = default_edit_path
         self.timeout_seconds = timeout_seconds
         self.debug_images = debug_images
         self.return_meshes = return_meshes
         self.device = torch.device(device)
         self.img_res = 512
+
         imageio_plugins.freeimage.download() # to load exr files
 
         # paths of generated temporary files that should be deleted when the server is stopped
@@ -70,7 +77,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
 
     def generate_input(self, prompt: str):
         if prompt is None:
-            return None
+            raise ValueError('Some inputs are missing.')
 
         job_manager = GradioJobManager()
 
@@ -92,7 +99,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
     def set_input_image(self, prompt: str, img: npt.NDArray) -> tuple[str, npt.NDArray]:
 
         if any(inp is None for inp in [prompt, img]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         self.delete_old_temp_files()
 
@@ -139,13 +146,15 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         for temp_path in [img_path, depth_path]:
             if pathlib.Path(temp_path).is_file():
                 pathlib.Path(temp_path).unlink()
+        
+        step1_completed = True
 
-        return input_image_identity_path, depth, gr.Label(value="Step completed.")
+        return input_image_identity_path, depth, step1_completed
 
     def select_foreground(self, img: npt.NDArray, object_prompt: str):
 
         if any(inp is None for inp in [img, object_prompt]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         job_manager = GradioJobManager()
 
@@ -181,14 +190,10 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
 
         if any(x is None for x in [input_image_identity_path, depth]):
             # Results of the previous steps are not available, compute the previous steps
-            input_image_identity_path, depth, gr_set_input_status = self.set_input_image(prompt, img)
+            input_image_identity_path, depth, step1_completed = self.set_input_image(prompt, img)
         else:
-            # Results of the previous steps are available,
-            # don't change the status of the buttons and labels in the previous steps.
-            gr_set_input_status = gr.Label()
-
-        if any(inp is None for inp in [depth, fg_mask]):
-            return None
+            # Results of the previous steps are available
+            step1_completed = True
 
         # pre-process inputs
         img = torch.from_numpy(img).to(dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
@@ -220,10 +225,15 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             gradio_client.file(img_path), gradio_client.file(fg_mask_path),
             fg_mask_dilation))
 
+        bg_path = None
+        bg_img = None
+        bg_depth_path = None
+        bg_depth = None
         bg_depth_harmonized_path = None
         bg_depth_harmonized = None
         bg_depth_mesh_path = None
         fg_depth_mesh_path = None
+
         def read_bg_depth_harmonized(jobs, job_manager):
             nonlocal bg_depth_harmonized_path, bg_depth_harmonized, bg_depth_mesh_path, fg_depth_mesh_path
             if self.return_meshes:
@@ -232,20 +242,17 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                 bg_depth_harmonized_path = jobs[0].outputs()[0]
             bg_depth_harmonized = np.asarray(imageio.imread(bg_depth_harmonized_path))
 
-        bg_depth_path = None
-        bg_depth = None
         def run_set_foreground(jobs, job_manager):
             nonlocal bg_depth_path, bg_depth
             bg_depth_path = jobs[0].outputs()[0]
             bg_depth = np.asarray(imageio.imread(bg_depth_path))
             set_foreground_job = GradioJob(job=self.diffhandles_client.submit(
                 gradio_client.file(depth_path), gradio_client.file(fg_mask_path), gradio_client.file(bg_depth_path),
+                gradio_client.file(img_path), gradio_client.file(bg_path),
                 api_name="/set_foreground"))
             job_manager.add_job(set_foreground_job)
             job_manager.add_callback(func=read_bg_depth_harmonized, when_jobs_done=[set_foreground_job])
 
-        bg_path = None
-        bg_img = None
         def run_bg_depth(jobs, job_manager):
             nonlocal bg_path, bg_img
             bg_path = jobs[0].outputs()[0]
@@ -266,26 +273,27 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                 pathlib.Path(temp_path).unlink()
 
         outputs = (
-            input_image_identity_path, depth, gr_set_input_status,
+            input_image_identity_path, depth, step1_completed,
             bg_depth_harmonized, bg_img)
 
         if self.return_meshes:
             outputs = outputs + (bg_depth_mesh_path, fg_depth_mesh_path)
 
-        outputs = outputs + (gr.Label(value="Step completed."),)
+        step2_completed = True
+
+        outputs = outputs + (step2_completed,)
 
         return outputs
 
     def preview_edit(
-            self, img: npt.NDArray = None, fg_mask: npt.NDArray = None, bg_img: npt.NDArray = None, depth: npt.NDArray = None, bg_depth_harmonized: npt.NDArray = None,
+            self, img: npt.NDArray = None, fg_mask: npt.NDArray = None, fg_mask_dilation: int = 3, bg_img: npt.NDArray = None, depth: npt.NDArray = None, bg_depth_harmonized: npt.NDArray = None,
             rot_angle: float = 0.0, rot_axis_x: float = 0.0, rot_axis_y: float = 1.0, rot_axis_z: float = 0.0,
-            trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0,
-            fg_mask_dilation: int = 3):
+            trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0):
 
         # gr_input_image, gr_fg_mask, gr_depth, gr_bg_depth_harmonized,
 
         if any(inp is None for inp in [img, fg_mask]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         job_manager = GradioJobManager()
 
@@ -462,32 +470,33 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             self, prompt: str = None, img: npt.NDArray = None,
             input_image_identity_path: str = None, depth: npt.NDArray = None, fg_mask: npt.NDArray = None, fg_mask_dilation: int = 6,
             bg_depth_harmonized: npt.NDArray = None, bg_img: npt.NDArray = None,
+            bg_depth_mesh_path: str = None, fg_depth_mesh_path: str = None,
             rot_angle: float = 0.0, rot_axis_x: float = 0.0, rot_axis_y: float = 1.0, rot_axis_z: float = 0.0,
             trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0,
-            gr_fg_weight: float = 1.5, gr_bg_weight: float = 1.25,
-            bg_depth_mesh_path: str = None, fg_depth_mesh_path: str = None):
+            gr_fg_weight: float = 1.5, gr_bg_weight: float = 1.25):
 
         inputs_from_previous_steps = [input_image_identity_path, depth, bg_depth_harmonized, bg_img]
         if self.return_meshes:
             inputs_from_previous_steps += [bg_depth_mesh_path, fg_depth_mesh_path]
+
         if any(x is None for x in inputs_from_previous_steps):
             # Results of the previous steps are not available, compute the previous steps
             if self.return_meshes:
-                (input_image_identity_path, depth, gr_set_input_status,
-                bg_depth_harmonized, bg_img, bg_depth_mesh_path, fg_depth_mesh_path, gr_set_foreground_status
+                (input_image_identity_path, depth, step1_completed,
+                bg_depth_harmonized, bg_img, bg_depth_mesh_path, fg_depth_mesh_path, step2_completed
                 ) = self.set_foreground(prompt, img, input_image_identity_path, depth, fg_mask, fg_mask_dilation)
             else:
-                (input_image_identity_path, depth, gr_set_input_status,
-                bg_depth_harmonized, bg_img, gr_set_foreground_status
+                (input_image_identity_path, depth, step1_completed,
+                bg_depth_harmonized, bg_img, step2_completed
                 ) = self.set_foreground(prompt, img, input_image_identity_path, depth, fg_mask, fg_mask_dilation)
         else:
             # Results of the previous steps are available,
             # don't change the status of the buttons and labels in the previous steps.
-            gr_set_input_status = gr.Label()
-            gr_set_foreground_status = gr.Label()
+            step1_completed = True
+            step2_completed = True
 
         if any(inp is None for inp in [prompt, fg_mask, depth, bg_depth_harmonized, input_image_identity_path]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         job_manager = GradioJobManager()
 
@@ -551,123 +560,97 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             if pathlib.Path(temp_path).is_file():
                 pathlib.Path(temp_path).unlink()
 
-        outputs = (
-            input_image_identity_path, depth, gr_set_input_status,
-            bg_depth_harmonized, bg_img, gr_set_foreground_status,
-            edited_image
-            )
+        # step 1 outputs
+        outputs = (input_image_identity_path, depth, step1_completed)
 
+        # step 2 outputs
+        outputs += (bg_depth_harmonized, bg_img)
         if self.return_meshes:
             outputs = outputs + (bg_depth_mesh_path, fg_depth_mesh_path)
-        
+        outputs += (step2_completed,)
+
+        # step 3 outputs
+        outputs += (edited_image,)
         if self.debug_images:
             debug_images = np.concatenate([img, debug_images[:, :debug_images.shape[0]*2], bg_img, debug_images[:, debug_images.shape[0]*2:]], axis=1)
             outputs = outputs + (debug_images,)
 
         return outputs
 
-    def run_diffhandles_pipeline(
-            self, prompt: str = None, img: npt.NDArray = None, fg_mask: npt.NDArray = None,
-            rot_angle: float = 0.0, rot_axis_x: float = 0.0, rot_axis_y: float = 1.0, rot_axis_z: float = 0.0,
-            trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0,
-            gr_fg_weight: float = 1.5, gr_bg_weight: float = 1.25, fg_mask_dilation: int = 3):
-
-        # print('run_diffhandles')
-
-        if any(inp is None for inp in [prompt, img, fg_mask]):
-            return None
-
-        # pre-process inputs
-        img = torch.from_numpy(img).to(dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
-        fg_mask = torch.from_numpy(fg_mask).to(dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
-        img = crop_and_resize(img=img, size=self.img_res)
-        fg_mask = crop_and_resize(img=fg_mask, size=self.img_res)
-        img = (img * 255.0)[0].permute(1, 2, 0).to(dtype=torch.uint8).numpy()
-        fg_mask = (fg_mask * 255.0)[0].permute(1, 2, 0).to(dtype=torch.uint8).numpy()
-
-        job_manager = GradioJobManager()
-
-        # print(prompt)
-        # print(f'{img.shape} {img.dtype}')
-        # print(f'{fg_mask.shape} {fg_mask.dtype}')
-        # print(f'{depth.shape} {depth.dtype}')
-        # print(f'{bg_depth.shape} {bg_depth.dtype}')
-
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            f.close()
-            img_path = f.name
-        imageio.imwrite(img_path, img)
-        with tempfile.NamedTemporaryFile(suffix=".png", delete=False) as f:
-            f.close()
-            fg_mask_path = f.name
-        imageio.imwrite(fg_mask_path, fg_mask)
-
-        depth_job = GradioJob(job=self.depth_estimator_client.submit(
-            gradio_client.file(img_path)))
-        bg_job = GradioJob(job=self.foreground_remover_client.submit(
-            gradio_client.file(img_path), gradio_client.file(fg_mask_path),
-            fg_mask_dilation))
-
-        edited_image_path = None
-        edited_image = None
-        debug_images = None
-        def read_edited_image(jobs, job_manager):
-            nonlocal edited_image_path, edited_image, debug_images
-            if self.debug_images:
-                edited_image_path, debug_images_path = jobs[0].outputs()[0]
-                debug_images = np.asarray(imageio.imread(debug_images_path))
-            else:
-                edited_image_path = jobs[0].outputs()[0]
-            edited_image = np.asarray(imageio.imread(edited_image_path))
-
-        depth_path = None
-        bg_depth_path = None
-        def run_diffhandles(jobs, job_manager):
-            nonlocal depth_path, bg_depth_path
-            depth_path = jobs[0].outputs()[0]
-            bg_depth_path = jobs[1].outputs()[0]
-            diffhandles_job = GradioJob(job=self.diffhandles_client.submit(
-                prompt,
-                gradio_client.file(img_path), gradio_client.file(fg_mask_path),
-                gradio_client.file(depth_path), gradio_client.file(bg_depth_path),
-                rot_angle, rot_axis_x, rot_axis_y, rot_axis_z,
-                trans_x, trans_y, trans_z,
-                gr_fg_weight, gr_bg_weight,
-                api_name="/run_diffhandles"))
-            job_manager.add_job(diffhandles_job)
-            job_manager.add_callback(func=read_edited_image, when_jobs_done=[diffhandles_job])
-
-        bg_path = None
-        bg_img = None
-        def run_bg_depth(jobs, job_manager):
-            nonlocal bg_path, bg_img
-            bg_path = jobs[0].outputs()[0]
-            if self.debug_images:
-                bg_img = np.asarray(imageio.imread(bg_path))
-            bg_depth_job = GradioJob(job=self.depth_estimator_client.submit(
-                gradio_client.file(bg_path)))
-            job_manager.add_job(bg_depth_job)
-            job_manager.add_callback(func=run_diffhandles, when_jobs_done=[depth_job, bg_depth_job])
-
-        job_manager.add_job(depth_job)
-        job_manager.add_job(bg_job)
-        job_manager.add_callback(func=run_bg_depth, when_jobs_done=[bg_job])
-
-        job_manager.run()
-
-        # delete temporary files
-        for temp_path in [img_path, fg_mask_path, bg_path, depth_path, bg_depth_path, edited_image_path]:
-            if pathlib.Path(temp_path).is_file():
-                pathlib.Path(temp_path).unlink()
-
-        if self.debug_images:
-            debug_images = np.concatenate([debug_images[:, :debug_images.shape[0]*3], bg_img, debug_images[:, debug_images.shape[0]*3:]], axis=1)
-            return edited_image, debug_images
+    def read_prompt(self, path):
+        
+        with open(path, 'r') as f:
+            prompt = f.read().splitlines()
+        prompt = [prompt for prompt in prompt if len(prompt) > 0]
+        if len(prompt) == 0:
+            print(f'WARNING: prompt for default inputs {path} is empty. Skipping sample.')
+            return None, None, None, None, None, None, None
         else:
-            return edited_image
+            if len(prompt) > 1:
+                print(f'WARNING: prompt for default inputs {path} has multiple lines, only using the first line.')
+            prompt = prompt[0]
 
+        return prompt
 
+    
+    def read_default_edit(self, path):
+        dir_path = os.path.dirname(path)
+        edit_name = os.path.basename(path)
+
+        input_image_path = os.path.join(dir_path, "input.png")
+        
+        # load input prompt
+        input_prompt_path = os.path.join(dir_path, "prompt.txt")
+        input_prompt = self.read_prompt(path=input_prompt_path)
+
+        fg_mask_path = os.path.join(dir_path, "mask.png")
+
+        # load foreground prompt
+        fg_prompt_path = os.path.join(dir_path, "fg_prompt.txt")
+        fg_prompt = self.read_prompt(path=fg_prompt_path)
+
+        # load transforms
+        with open(os.path.join(dir_path, 'transforms.json'), 'r') as f:
+            transforms = json.load(f)
+        if edit_name not in transforms:
+            raise ValueError(f'WARNING: transform {edit_name} not found in {os.path.join(dir_path, "transforms.json")}.')
+        transform = transforms[edit_name]
+        translation = transform['translation'] if 'translation' in transform else [0.0, 0.0, 0.0]
+        rot_axis = transform['rotation_axis'] if 'rotation_axis' in transform else [0.0, 1.0, 0.0]
+        rot_angle = transform['rotation_angle'] if 'rotation_angle' in transform else 0.0
+
+        # load other config
+        config_path = os.path.join(dir_path, "config.yaml")
+        conf = OmegaConf.load(config_path)
+        
+        return {
+            'input_image_path': input_image_path,
+            'input_prompt': input_prompt,
+            'fg_mask_path': fg_mask_path,
+            'fg_prompt': fg_prompt,
+            'fg_mask_dilation': conf.fg_removal_dilation,
+            'translation': translation,
+            'rot_axis': rot_axis,
+            'rot_angle': rot_angle,
+            'fg_preservation': conf.fg_weight,
+            'bg_preservation': conf.bg_weight}
+    
+    def toggle_visibility(self, current_visibility):
+        current_visibility = not current_visibility
+        return gr.update(visible=current_visibility), current_visibility
+    
+    def step_processed_changed(self, step_processed):
+        
+        if step_processed:
+            status_text = "Step processed."
+        else:
+            status_text = "Inputs changed, step will be re-processed."
+
+        return gr.Markdown(value=status_text)
+    
     def build_gradio_app(self):
+
+        default_inputs = self.read_default_edit(path=self.default_edit_path)
 
         with gr.Blocks() as gr_app:
             with gr.Row():
@@ -677,123 +660,194 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                         )
 
             with gr.Row():
-                gr.HTML(value="""
-                        <h2>Step 1a: Upload or Generate an input image.</h2>
-                        <ol>
-                        <li>Enter a text prompt that describes the input image.</li>
-                        <li>Upload the input image or generate it from the text prompt.</li>
-                        <li>Process the input image. (Processing time ~46 seconds. This will be improved in the future.)</li>
-                        </ol>
-                        The text prompt is still needed, even if you upload an image!
-                        """
-                        )
-            with gr.Row():
+                
+                # Step 2: Upload or Generate an Input Image
                 with gr.Column():
-                    gr_text_prompt = gr.Textbox(label="Image Prompt", value="toy cubes on a table")
+                    gr_input_image = gr.Image(label="Input Image", value=default_inputs['input_image_path'])
+                    gr.HTML(value="""
+                            <h2>Step 1: Upload or Generate an Input Image.</h2>
+                            <ol>
+                            <li>Enter a text prompt that describes the input image.</li>
+                            <li>Upload the input image or generate it from the text prompt.</li>
+                            </ol>
+                            The text prompt is still needed, even if you upload an image!
+                            """
+                            # <li>Process the input image. (Processing time ~46 seconds. This will be improved in the future.)</li>
+                            )
+                    
                     gr_generate_button = gr.Button("Generate Input Image")
-                with gr.Column():
-                    gr_input_image = gr.Image(label="Input Image", value="data/toy_cubes/input.png")
+                    gr_text_prompt = gr.Textbox(label="Image Prompt", value=default_inputs['input_prompt'])
+                    gr_set_input_button = gr.Button("Process Input Image", visible=False)
 
-            # with gr.Row():
-            #     gr.HTML(value="""
-            #             <h2>Step 1b: Process the input image.</h2>
-            #             """
-            #             )
-            with gr.Row():
-                gr_set_input_button = gr.Button("Process Input Image")
-            with gr.Row():
-                gr_input_image_identity = gr.File(label="Input Image Identity", type="filepath", visible=False, interactive=False)
-                gr_depth = HDRImage(label="Depth Image", visible=False, interactive=False)
-                gr_set_input_status = gr.Label(value="Step not completed yet.")
+                    # gr_step1_processed = gr.State(False)
+                    
+                    gr_step1_processed = gr.Checkbox(label="Step 1 Processed", value=False, visible=False, interactive=False)
+                    gr_step1_processed_text = gr.Markdown(value="Inputs changed, step will be re-processed.")
 
-            with gr.Row():
-                gr.HTML(value="""
-                        <h2>Step 2: Select Object</h2>
-                        <ol>
-                        <li>Upload an object mask or generate it from a text promp.</li>
-                        <li>Process the object selection. (Processing time ~22 seconds with Object Peeling, or ~2 seconds with Lama.)</li>
-                        </ol>
-                        """
-                        )
-            with gr.Row():
-                with gr.Column():
-                    gr_object_prompt = gr.Textbox(label="Select Object with a Prompt", value="cube toy")
-                    gr_fg_mask_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=6, minimum=0, maximum=100)
-                    gr_object_button = gr.Button("Select Object")
-                with gr.Column():
-                    gr_fg_mask = gr.Image(label="Object Mask", value="data/toy_cubes/mask.png")
-            with gr.Row():
-                gr_set_foreground_button = gr.Button("Process Object Selection")
-            with gr.Row():
-                gr_bg_depth_harmonized = HDRImage(label="Harmonized Background Depth", visible=False, interactive=False)
-                gr_bg_img = gr.Image(label="Background Image", visible=False, interactive=False)
-                if self.return_meshes:
-                    with gr.Column():
-                        gr_bg_depth_mesh = gr.File(label="Background Mesh", type="filepath", visible=True, interactive=False)
-                    with gr.Column():
-                        gr_fg_depth_mesh = gr.File(label="Foreground Mesh", type="filepath", visible=True, interactive=False)
-            with gr.Row():
-                gr_set_foreground_status = gr.Label(value="Step not completed yet.")
+                    # gr_show_step1_outputs = gr.Checkbox(label="Show Intermediate Step 1 Outputs", value=False)
+                    # gr.HTML(value="<h3>Intermediate Step 1 Outputs</h3>")
+                    gr_step1_show_intermediate = gr.Checkbox(label="Show Intermediate Outputs", value=False)
+                    gr_step1_intermediate_row = gr.Row(visible=False)
+                    gr_step1_intermediate_row_visible = gr.State(False)
+                    with gr_step1_intermediate_row:
+                        gr_input_image_identity = gr.File(label="Input Image Identity", type="filepath", interactive=False)
+                        gr_depth = HDRImage(label="Depth Image", interactive=False)
+                    
 
-            with gr.Row():
-                gr.HTML(value="""
-                        <h2>Step 3: Edit Object</h2>
-                        <li>Enter the transformation parameters (rotation angle, rotation axis, tranlation - translation is roughly in meters).</li>
-                        <li>'Preview Edit' to get a fast preview of the depth of the edited image.</li>
-                        <li>'Perform Edit' to get the edited image. (Processing time ~36 seconds. This will be improved in the future.)</li>
-                        """
-                        )
-            with gr.Row():
+                # Step 2: Select Object
                 with gr.Column():
-                    gr_trans_x = gr.Number(label="Translation X (left, right)", value=-0.5, minimum=-100.0, maximum=100.0)
-                    gr_trans_y = gr.Number(label="Translation Y (up, down)", value=0.55, minimum=-100.0, maximum=100.0)
-                    gr_trans_z = gr.Number(label="Translation Z (backward, forward)", value=0.0, minimum=-100.0, maximum=100.0)
-                    # gr_rot_angle = gr.Slider(label="Rotation Angle", value=40.0, minimum=-180.0, maximum=180.0, step=1.0)
-                    gr_rot_angle = gr.Slider(label="Rotation Angle", value=0.0, minimum=-180.0, maximum=180.0, step=1.0)
-                    gr_rot_axis_x = gr.Number(label="Rotation Axis X", value=0.0, minimum=-1.0, maximum=1.0)
-                    gr_rot_axis_y = gr.Number(label="Rotation Axis Y", value=1.0, minimum=-1.0, maximum=1.0)
-                    gr_rot_axis_z = gr.Number(label="Rotation Axis Z", value=0.0, minimum=-1.0, maximum=1.0)
+                    gr_fg_mask = gr.Image(label="Object Mask", value=default_inputs['fg_mask_path'])
+                    gr.HTML(value="""
+                            <h2>Step 2: Select Object</h2>
+                            <ol>
+                            <li>Upload an object mask or generate it from a text prompt.</li>
+                            </ol>
+                            """
+                            # <li>Process the object selection. (Processing time ~22 seconds with Object Peeling, or ~2 seconds with Lama.)</li>
+                            )
+                    
+                    gr_select_object_button = gr.Button("Select Object")
+                    gr_object_prompt = gr.Textbox(label="Select Object with a Prompt", value=default_inputs['fg_prompt'])
+                    gr_fg_mask_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=default_inputs['fg_mask_dilation'], minimum=0, maximum=100)
+                    gr_set_foreground_button = gr.Button("Process Object Selection", visible=False)
 
-                    gr_fg_weight = gr.Number(label="Foreground Preservation", value=1.5, minimum=0.0, maximum=100.0)
-                    gr_bg_weight = gr.Number(label="Background Preservation", value=1.25, minimum=0.0, maximum=100.0)
-                    # gr_fg_mask_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=3, minimum=0, maximum=100)
+                    # gr_step2_processed = gr.State(False)
+                    
+                    gr_step2_processed = gr.Checkbox(label="Step 2 Processed", value=False, visible=False, interactive=False)
+                    gr_step2_processed_text = gr.Markdown(value="Inputs changed, step will be re-processed.")
+
+                    # gr_show_step2_outputs = gr.Checkbox(label="Show Intermediate Step 2 Outputs", value=False)
+                    # gr.HTML(value="<h3>Intermediate Step 2 Outputs</h3>")
+                    gr_step2_show_intermediate = gr.Checkbox(label="Show Intermediate Outputs", value=False)
+                    gr_step2_intermediate_row = gr.Row(visible=False)
+                    gr_step2_intermediate_row_visible = gr.State(False)
+                    with gr_step2_intermediate_row:
+                        gr_bg_depth_harmonized = HDRImage(label="Harmonized Background Depth", interactive=False)
+                        gr_bg_img = gr.Image(label="Background Image", interactive=False)
+                        if self.return_meshes:
+                            with gr.Row():
+                                with gr.Column():
+                                    gr_bg_depth_mesh = gr.File(label="Background Mesh", type="filepath", interactive=False)
+                                with gr.Column():
+                                    gr_fg_depth_mesh = gr.File(label="Foreground Mesh", type="filepath", interactive=False)
+                    
+
+                # Step 3: Edit Object
+                with gr.Column():
+                    gr_edited_image = gr.Image(label="Edited Image")
+                    if self.debug_images:
+                        gr_debug_images = gr.Image(label="Debug Images")
+                    gr.HTML(value="""
+                            <h2>Step 3: Edit Object</h2>
+                            <li>Enter the transformation parameters (rotation angle, rotation axis, tranlation - translation is roughly in meters).</li>
+                            <li>'Preview Edit' to get a fast preview of the depth of the edited image.</li>
+                            <li>'Perform Edit' to get the edited image.</li>
+                            Previewing is fast, but performing the edit takes:<br/>
+                            ~46s if inputs to step 1 were changed (or running first time) +<br/>
+                            ~2s if inputs to steps 1 or 2 were changed (or running first time) +<br/>
+                            ~36s for processing the object edit
+                            (We are looking to improve processing times in the future.)
+                            """
+                            )
                     with gr.Row():
                         with gr.Column():
                             gr_preview_edit_button = gr.Button("Preview Edit")
                         with gr.Column():
                             gr_edit_button = gr.Button("Perform Edit")
-                with gr.Column():
-                    if self.debug_images:
-                        gr_debug_images = gr.Image(label="Debug Images")
-                    gr_edited_image = gr.Image(label="Edited Image")
+                    gr_trans_x = gr.Number(label="Translation X (left, right)", value=default_inputs['translation'][0], minimum=-100.0, maximum=100.0)
+                    gr_trans_y = gr.Number(label="Translation Y (up, down)", value=default_inputs['translation'][1], minimum=-100.0, maximum=100.0)
+                    gr_trans_z = gr.Number(label="Translation Z (backward, forward)", value=default_inputs['translation'][2], minimum=-100.0, maximum=100.0)
+                    # gr_rot_angle = gr.Slider(label="Rotation Angle", value=40.0, minimum=-180.0, maximum=180.0, step=1.0)
+                    gr_rot_angle = gr.Slider(label="Rotation Angle", value=default_inputs['rot_angle'], minimum=-180.0, maximum=180.0, step=1.0)
+                    gr_rot_axis_x = gr.Number(label="Rotation Axis X", value=default_inputs['rot_axis'][0], minimum=-1.0, maximum=1.0)
+                    gr_rot_axis_y = gr.Number(label="Rotation Axis Y", value=default_inputs['rot_axis'][1], minimum=-1.0, maximum=1.0)
+                    gr_rot_axis_z = gr.Number(label="Rotation Axis Z", value=default_inputs['rot_axis'][2], minimum=-1.0, maximum=1.0)
 
+                    gr_fg_weight = gr.Number(label="Foreground Preservation", value=default_inputs['fg_preservation'], minimum=0.0, maximum=100.0)
+                    gr_bg_weight = gr.Number(label="Background Preservation", value=default_inputs['bg_preservation'], minimum=0.0, maximum=100.0)
+                    # gr_fg_mask_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=3, minimum=0, maximum=100)
+                   
+            gr_step1_show_intermediate.change(
+                self.toggle_visibility,
+                inputs=[gr_step1_intermediate_row_visible],
+                outputs=[gr_step1_intermediate_row, gr_step1_intermediate_row_visible])
+            
+            gr_step2_show_intermediate.change(
+                self.toggle_visibility,
+                inputs=[gr_step2_intermediate_row_visible],
+                outputs=[gr_step2_intermediate_row, gr_step2_intermediate_row_visible])
+            
+            step1_inputs = [gr_text_prompt, gr_input_image]
+            step1_outputs = [gr_input_image_identity, gr_depth]
+
+            step2_inputs = [gr_fg_mask, gr_fg_mask_dilation]
+            step2_outputs = [gr_bg_depth_harmonized, gr_bg_img]
+            if self.return_meshes:
+                step2_outputs += [gr_bg_depth_mesh, gr_fg_depth_mesh]
+
+            step3_inputs = [gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z, gr_fg_weight, gr_bg_weight]
+            step3_outputs = [gr_edited_image]
+            if self.debug_images:
+                step3_outputs += [gr_debug_images]
+
+            for gr_input in step1_inputs:
+                gr_input.change(
+                    lambda: (None,)*(len(step1_outputs)+len(step2_outputs)) + (False, False),
+                    inputs=[],
+                    outputs=step1_outputs + step2_outputs + [gr_step1_processed, gr_step2_processed])
+
+            for gr_input in step2_inputs:
+                gr_input.change(
+                    lambda: (None,)*len(step2_outputs) + (False,),
+                    inputs=[],
+                    outputs=step2_outputs + [gr_step2_processed])
+
+            gr_step2_processed.change(
+                self.step_processed_changed,
+                inputs=[gr_step2_processed],
+                outputs=[gr_step2_processed_text]
+            )
+
+            gr_step1_processed.change(
+                self.step_processed_changed,
+                inputs=[gr_step1_processed],
+                outputs=[gr_step1_processed_text]
+            )
+
+            # gr_show_step1_outputs.change(
+            #     self.set_intermediate_outputs_visible,
+            #     inputs=[gr_show_step1_outputs] + step1_outputs,
+            #     outputs=step1_outputs)
+            
+            # gr_show_step2_outputs.change(
+            #     self.set_intermediate_outputs_visible,
+            #     inputs=[gr_show_step2_outputs] + step2_outputs,
+            #     outputs=step2_outputs)
+            
             gr_generate_button.click(
                 self.generate_input,
                 inputs=[gr_text_prompt],
                 outputs=[gr_input_image])
 
-            gr_set_input_button.click(
-                self.set_input_image,
-                inputs=[gr_text_prompt, gr_input_image],
-                outputs=[gr_input_image_identity, gr_depth, gr_set_input_status])
-
-            gr_object_button.click(
+            gr_select_object_button.click(
                 self.select_foreground,
                 inputs=[gr_input_image, gr_object_prompt],
                 outputs=[gr_fg_mask])
 
-            gr_set_foreground_button_outputs = [
-                gr_input_image_identity, gr_depth, gr_set_input_status,
-                gr_bg_depth_harmonized, gr_bg_img]
-            if self.return_meshes:
-                gr_set_foreground_button_outputs += [gr_bg_depth_mesh, gr_fg_depth_mesh]
-            gr_set_foreground_button_outputs += [gr_set_foreground_status]
+            gr_set_input_button.click(
+                self.set_input_image,
+                inputs=step1_inputs,
+                outputs=step1_outputs + [gr_step1_processed])
 
             gr_set_foreground_button.click(
                 self.set_foreground,
-                inputs=[
-                    gr_text_prompt, gr_input_image, gr_input_image_identity, gr_depth, gr_fg_mask, gr_fg_mask_dilation],
-                outputs=gr_set_foreground_button_outputs)
+                inputs=step1_inputs + step2_inputs,
+                outputs=step1_outputs + [gr_step1_processed] + step2_outputs + [gr_step2_processed])
+
+            gr_edit_button.click(
+                self.transform_foreground,
+                inputs=step1_inputs + step1_outputs + step2_inputs + step2_outputs + step3_inputs,
+                outputs=step1_outputs + [gr_step1_processed] + step2_outputs + [gr_step2_processed] + step3_outputs)
 
             preview_edit_button_outputs = [
                 gr_edited_image, gr_bg_img, gr_depth, gr_bg_depth_harmonized]
@@ -804,30 +858,10 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             gr_preview_edit_button.click(
                 self.preview_edit,
                 inputs=[
-                    gr_input_image, gr_fg_mask, gr_bg_img, gr_depth, gr_bg_depth_harmonized,
+                    gr_input_image, gr_fg_mask, gr_fg_mask_dilation, gr_bg_img, gr_depth, gr_bg_depth_harmonized,
                     gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z],
                 outputs=preview_edit_button_outputs
             )
-
-            edit_button_outputs = [
-                gr_input_image_identity, gr_depth, gr_set_input_status,
-                gr_bg_depth_harmonized, gr_bg_img, gr_set_foreground_status,
-                gr_edited_image
-            ]
-            edit_button_inputs = [
-                    gr_text_prompt, gr_input_image, gr_input_image_identity, gr_depth, gr_fg_mask, gr_fg_mask_dilation,
-                    gr_bg_depth_harmonized, gr_bg_img,
-                    gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z,
-                    gr_fg_weight, gr_bg_weight]
-            if self.return_meshes:
-                edit_button_outputs += [gr_bg_depth_mesh, gr_fg_depth_mesh]
-                edit_button_inputs += [gr_bg_depth_mesh, gr_fg_depth_mesh]
-            if self.debug_images:
-                edit_button_outputs.append(gr_debug_images)
-            gr_edit_button.click(
-                self.transform_foreground,
-                inputs=edit_button_inputs,
-                outputs=edit_button_outputs)
 
             # gr_edit_button.click(
             #     self.run_diffhandles_pipeline,
@@ -851,6 +885,7 @@ def parse_args():
     parser.add_argument('--device', type=str, default='cuda:0')
     parser.add_argument('--debug_images', action='store_true', default=False)
     parser.add_argument('--return_meshes', action='store_true', default=False)
+    parser.add_argument('--default_edit_path', type=str, default='data/toy_cubes/edit_001')
     return parser.parse_args()
 
 if __name__ == '__main__':
@@ -860,5 +895,5 @@ if __name__ == '__main__':
         netpath=args.netpath, port=args.port,
         text2img_url=args.text2img_url, foreground_selector_url=args.foreground_selector_url, foreground_remover_url=args.foreground_remover_url,
         depth_estimator_url=args.depth_estimator_url, diffhandles_url=args.diffhandles_url,
-        debug_images=args.debug_images, return_meshes=args.return_meshes, device=args.device)
+        default_edit_path=args.default_edit_path, debug_images=args.debug_images, return_meshes=args.return_meshes, device=args.device)
     server.start()

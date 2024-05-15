@@ -28,7 +28,7 @@ class LangSAMSegmenterWebapp(ForegroundSelectorWebapp):
         print('run_langsam_segmenter')
 
         if img is None or prompt is None:
-            return None
+            raise ValueError('Some inputs are missing.')
 
         print(f'{img.shape} {img.dtype}')
         print(f'{prompt}')

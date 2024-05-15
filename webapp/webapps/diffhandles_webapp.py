@@ -58,7 +58,7 @@ class DiffhandlesWebapp(GradioWebapp):
             self, prompt: str, depth: npt.NDArray, img: npt.NDArray) -> str:
 
         if any(inp is None for inp in [prompt, depth]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         self.delete_old_temp_files()
 
@@ -100,10 +100,10 @@ class DiffhandlesWebapp(GradioWebapp):
 
         # return input_image_identity_bytes.read()
 
-    def set_foreground(self, depth: npt.NDArray, fg_mask: npt.NDArray, bg_depth: npt.NDArray) -> npt.NDArray:
+    def set_foreground(self, depth: npt.NDArray, fg_mask: npt.NDArray, bg_depth: npt.NDArray, img: npt.NDArray, bg_img: npt.NDArray) -> npt.NDArray:
 
         if any(inp is None for inp in [depth, fg_mask, bg_depth]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         self.delete_old_temp_files()
         
@@ -120,22 +120,43 @@ class DiffhandlesWebapp(GradioWebapp):
         bg_depth = torch.from_numpy(bg_depth).to(device=self.diff_handles.device, dtype=torch.float32)[None, None, ...]
         bg_depth = crop_and_resize(img=bg_depth, size=self.img_res)
 
+        img = torch.from_numpy(img).to(device=self.diff_handles.device, dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
+        img = crop_and_resize(img=img, size=self.img_res)
+
+        bg_img = torch.from_numpy(bg_img).to(device=self.diff_handles.device, dtype=torch.float32).permute(2, 0, 1)[None, ...] / 255.0
+        bg_img = crop_and_resize(img=bg_img, size=self.img_res)
+
         # set foreground
         bg_depth = self.diff_handles.set_foreground(depth=depth, fg_mask=fg_mask, bg_depth=bg_depth)
 
         if self.return_meshes:
-            intrinsics = self.diff_handles.diffuser.get_depth_intrinsics(device=depth.device)
+            with torch.no_grad():
+                intrinsics = self.diff_handles.diffuser.get_depth_intrinsics(device=depth.device)
+                
+                bg_depth_mesh = depth_to_mesh(depth=bg_depth, intrinsics=intrinsics)
+                fg_depth_mesh = depth_to_mesh(depth=depth, intrinsics=intrinsics, mask=fg_mask[0, 0]>0.5)
+
+                # change color attribute of vertices
+                # from image coordinates corresponding to each vertex
+                # to the color of the input image at the image coordinates
+                for mesh, src_img in zip([bg_depth_mesh, fg_depth_mesh], [bg_img, img]):
+                    img_coords = mesh.vert_attributes['color'].values[..., :2]
+                    vert_colors = torch.nn.functional.grid_sample(
+                        input=src_img,
+                        grid=img_coords[None, None, ...]*2-1,
+                        align_corners=True
+                        )[0, :, 0, :].permute(1, 0)
+                    mesh.vert_attributes['color'].values.copy_(vert_colors)
             
-            bg_depth_mesh = depth_to_mesh(depth=bg_depth, intrinsics=intrinsics)
-            fg_depth_mesh = depth_to_mesh(depth=depth, intrinsics=intrinsics, mask=fg_mask[0, 0]>0.5)
-            
-            with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
+            # with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
                 f.close()
                 bg_depth_mesh_path = f.name
                 self.temp_file_paths.append(bg_depth_mesh_path)
             save_mesh(bg_depth_mesh, bg_depth_mesh_path)
 
-            with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
+            # with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
                 f.close()
                 fg_depth_mesh_path = f.name
                 self.temp_file_paths.append(fg_depth_mesh_path)
@@ -157,7 +178,7 @@ class DiffhandlesWebapp(GradioWebapp):
             fg_weight: float = 1.5, bg_weight: float = 1.25) -> npt.NDArray:
 
         if any(inp is None for inp in [prompt, fg_mask, depth, bg_depth_harmonized, input_image_identity_path]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         input_image_identity = np.load(input_image_identity_path)
         null_text_emb = torch.from_numpy(input_image_identity['null_text_emb']).to(device=self.diff_handles.device)
@@ -214,7 +235,7 @@ class DiffhandlesWebapp(GradioWebapp):
         # print('run_diffhandles')
 
         if any(inp is None for inp in [prompt, fg_mask, depth, bg_depth]):
-            return None
+            raise ValueError('Some inputs are missing.')
 
         # print(prompt)
         # print(f'{img.shape} {img.dtype}')
@@ -329,6 +350,7 @@ class DiffhandlesWebapp(GradioWebapp):
                 with gr.Column():
                     gr_fg_mask = gr.Image(label="Foreground Mask", value="data/sunflower/mask.png")
                     gr_bg_depth = HDRImage(label="Background Depth", value="data/sunflower/bg_depth.exr")
+                    gr_bg_image = gr.Image(label="Background Image", value="data/sunflower/bg.png")
                     gr_select_button = gr.Button("Select Object")
                 with gr.Column():
                     gr_bg_depth_harmonized = HDRImage(label="Harmonized Background Depth")
@@ -381,7 +403,7 @@ class DiffhandlesWebapp(GradioWebapp):
 
             gr_select_button.click(
                 self.set_foreground,
-                inputs=[gr_depth, gr_fg_mask, gr_bg_depth],
+                inputs=[gr_depth, gr_fg_mask, gr_bg_depth, gr_input_image, gr_bg_image],
                 outputs=[gr_bg_depth_harmonized, gr_bg_depth_mesh, gr_fg_depth_mesh] if self.return_meshes else [gr_bg_depth_harmonized])
 
             gr_edit_button.click(

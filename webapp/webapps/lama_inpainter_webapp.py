@@ -27,7 +27,7 @@ class LamaInpainterWebapp(ForegroundRemoverWebapp):
         print('run_lama_inpainter')
 
         if img is None or fg_mask is None:
-            return None
+            raise ValueError('Some inputs are missing.')
 
         print(f'{img.shape} {img.dtype}')
         print(f'{fg_mask.shape} {fg_mask.dtype}')

@@ -1,0 +1,14 @@
+guided_diffuser:
+  bg_weight: 0.5
+  fg_weight: 1.5
+  fg_patch_size: 1
+  bg_patch_size: 1
+  use_depth: true
+  save_denoising_steps: false
+  bg_loss_type: 'local_avg'
+  num_timesteps: 50
+  num_optsteps: 3
+  guidance_max_step: 38
+  guidance_schedule_type: 'constant'
+  bg_erosion: 15
+  seed: 2773
