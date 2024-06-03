@@ -198,6 +198,7 @@ class DiffhandlesWebapp(GradioWebapp):
         bg_depth_harmonized = torch.from_numpy(bg_depth_harmonized).to(device=self.diff_handles.device, dtype=torch.float32)[None, None, ...]
         bg_depth_harmonized = crop_and_resize(img=bg_depth_harmonized, size=self.img_res)
 
+        rot_angle = float(rot_angle)
         rot_axis = torch.tensor([rot_axis_x, rot_axis_y, rot_axis_z], dtype=torch.float32, device=self.diff_handles.device)
         translation = torch.tensor([trans_x, trans_y, trans_z], dtype=torch.float32, device=self.diff_handles.device)
 

@@ -12,3 +12,4 @@ guided_diffuser:
   guidance_schedule_type: 'quadratic'
   bg_erosion: 0
   seed: 2773
+depth_transform_mode: 'pc'

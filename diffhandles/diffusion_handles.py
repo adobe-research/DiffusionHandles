@@ -145,7 +145,8 @@ class DiffusionHandles:
                 depth=depth, bg_depth=bg_depth, fg_mask=fg_mask,
                 intrinsics=self.diffuser.get_depth_intrinsics(device=depth.device),
                 rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
-                use_input_depth_normalization=use_input_depth_normalization)
+                use_input_depth_normalization=use_input_depth_normalization,
+                depth_transform_mode=self.conf.depth_transform_mode)
 
         # perform second diffusion inference pass guided by the 3d-transformed features
         with torch.no_grad():

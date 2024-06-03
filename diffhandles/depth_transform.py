@@ -73,19 +73,20 @@ def depth_to_mesh(depth: torch.Tensor, intrinsics: torch.Tensor, extrinsics_R: t
 def transform_depth(
         depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
         rot_angle: float = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None,
-        use_input_depth_normalization = False):
+        use_input_depth_normalization = False, depth_transform_mode: str = "pc"):
 
-    use_mesh = False
-    if use_mesh:
+    if depth_transform_mode == "mesh":
         return transform_depth_mesh(
             depth=depth, bg_depth=bg_depth, fg_mask=fg_mask, intrinsics=intrinsics,
             rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
             use_input_depth_normalization=use_input_depth_normalization)
-    else:
+    elif depth_transform_mode == "pc":
         return transform_depth_pc(
             depth=depth, bg_depth=bg_depth, fg_mask=fg_mask, intrinsics=intrinsics,
             rot_angle=rot_angle, rot_axis=rot_axis, translation=translation,
             use_input_depth_normalization=use_input_depth_normalization)
+    else:
+        raise ValueError(f"Unknown depth transform mode '{depth_transform_mode}'.")
     
 def transform_depth_mesh(
         depth: torch.Tensor, bg_depth: torch.Tensor, fg_mask: torch.Tensor, intrinsics: torch.Tensor,
@@ -120,26 +121,30 @@ def transform_depth_mesh(
     bg_depth_mesh = depth_to_mesh(depth=bg_depth, intrinsics=intrinsics)
     fg_depth_mesh = depth_to_mesh(depth=depth, intrinsics=intrinsics, mask=fg_mask[0, 0]>0.5)
 
-    verts = fg_depth_mesh.verts
-
-    # move centroid to origin to rotate about centroid
-    centroid = verts.mean(dim=0, keepdim=True)
-    verts = verts - centroid
+    # transform foreground mesh
+    fg_depth_mesh.verts.copy_(transform_points(
+        points=fg_depth_mesh.verts, rot_angle=rot_angle, rot_axis=rot_axis, translation=translation))
     
-    # Use Rodriguez rotation formula to rotate with axis and angle
-    rot_axis = rot_axis / torch.linalg.norm(rot_axis, ord=2)
-    rot_angle = rot_angle * (torch.pi / 180.0)
-    cos_theta = torch.cos(rot_angle)
-    sin_theta = torch.sin(rot_angle)
-    term1 = verts * cos_theta
-    term2 = torch.cross(rot_axis[None, ...], verts) * sin_theta
-    term3 = rot_axis * torch.sum(verts * rot_axis[None, ...], dim=-1, keepdim=True) * (1 - cos_theta)
-    verts = term1 + term2 + term3
+    # verts = fg_depth_mesh.verts
 
-    # move centroid back to original position and add translation
-    verts = verts + centroid + translation[None, ...]
+    # # move centroid to origin to rotate about centroid
+    # centroid = verts.mean(dim=0, keepdim=True)
+    # verts = verts - centroid
+    
+    # # Use Rodriguez rotation formula to rotate with axis and angle
+    # rot_axis = rot_axis / torch.linalg.norm(rot_axis, ord=2)
+    # rot_angle = rot_angle * (torch.pi / 180.0)
+    # cos_theta = torch.cos(rot_angle)
+    # sin_theta = torch.sin(rot_angle)
+    # term1 = verts * cos_theta
+    # term2 = torch.cross(rot_axis[None, ...], verts) * sin_theta
+    # term3 = rot_axis * torch.sum(verts * rot_axis[None, ...], dim=-1, keepdim=True) * (1 - cos_theta)
+    # verts = term1 + term2 + term3
 
-    fg_depth_mesh.verts.copy_(verts)
+    # # move centroid back to original position and add translation
+    # verts = verts + centroid + translation[None, ...]
+
+    # fg_depth_mesh.verts.copy_(verts)
 
     camera = Camera(intrinsics=intrinsics)
 
@@ -227,6 +232,8 @@ def transform_depth_pc(
         raise RuntimeError(f'Expected fg_mask to be square, got shape {fg_mask.shape[-2]} x {fg_mask.shape[-1]}.')
     img_res = fg_mask.shape[-1]
     
+    # TODO: change to transform_points and make sure results are exactly the same,
+    # then delete transform_point_cloud (which is not used anywhere else)
     pts, mod_ids = transform_point_cloud(
         points=pts.cpu().numpy(),
         axis=rot_axis.cpu().numpy(),
@@ -429,6 +436,27 @@ def transform_depth_pc(
     
 #     return rotated_points
 
+def transform_points(
+        points: torch.Tensor, rot_angle: torch.Tensor = None, rot_axis: torch.Tensor = None, translation: torch.Tensor = None):
+    
+    # move centroid to origin to rotate about centroid
+    centroid = points.mean(dim=0, keepdim=True)
+    points = points - centroid
+    
+    # Use Rodriguez rotation formula to rotate with axis and angle
+    rot_axis = rot_axis / torch.linalg.norm(rot_axis, ord=2)
+    rot_angle = rot_angle * (torch.pi / 180.0)
+    cos_theta = torch.cos(rot_angle)
+    sin_theta = torch.sin(rot_angle)
+    term1 = points * cos_theta
+    term2 = torch.cross(rot_axis[None, ...], points) * sin_theta
+    term3 = rot_axis * torch.sum(points * rot_axis[None, ...], dim=-1, keepdim=True) * (1 - cos_theta)
+    points = term1 + term2 + term3
+
+    # move centroid back to original position and add translation
+    points = points + centroid + translation[None, ...]
+
+    return points
 
 def transform_point_cloud(points, axis, angle_degrees, x, y, z, mask):
     """

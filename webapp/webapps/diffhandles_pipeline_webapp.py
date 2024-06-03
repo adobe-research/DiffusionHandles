@@ -16,10 +16,12 @@ import gradio_client
 import imageio.plugins as imageio_plugins
 import imageio.v3 as imageio
 from omegaconf import OmegaConf, DictConfig
-from diffhandles.depth_transform import transform_depth, depth_to_mesh
+from diffhandles.depth_transform import transform_depth, depth_to_mesh, transform_points
 from diffhandles.utils import solve_laplacian_depth
 from diffhandles.mesh_io import save_mesh
 from diffhandles.guided_stable_diffuser import GuidedStableDiffuser
+from diffhandles.renderer import Camera
+from diffhandles.pytorch3d_renderer import PyTorch3DRenderer, PyTorch3DRendererArgs
 
 from gradio_job_manager import GradioJob, GradioJobManager
 from utils import crop_and_resize
@@ -288,7 +290,8 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
     def preview_edit(
             self, img: npt.NDArray = None, fg_mask: npt.NDArray = None, fg_mask_dilation: int = 3, bg_img: npt.NDArray = None, depth: npt.NDArray = None, bg_depth_harmonized: npt.NDArray = None,
             rot_angle: float = 0.0, rot_axis_x: float = 0.0, rot_axis_y: float = 1.0, rot_axis_z: float = 0.0,
-            trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0):
+            trans_x: float = 0.0, trans_y: float = 0.0, trans_z: float = 0.0,
+            preview_mode = "depth"):
 
         # gr_input_image, gr_fg_mask, gr_depth, gr_bg_depth_harmonized,
 
@@ -383,6 +386,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             fg_mask = fg_mask.mean(dim=1, keepdim=True) # average channels
         fg_mask = crop_and_resize(img=fg_mask, size=self.img_res)
         fg_mask = (fg_mask>0.5).to(dtype=torch.float32, device=self.device)
+        rot_angle = float(rot_angle)
         rot_axis = torch.tensor([rot_axis_x, rot_axis_y, rot_axis_z], dtype=torch.float32, device=self.device)
         translation = torch.tensor([trans_x, trans_y, trans_z], dtype=torch.float32, device=self.device)
 
@@ -426,12 +430,13 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
 
         # gr_edited_image, gr_depth, gr_bg_depth_harmonized]
 
-        if self.return_meshes:
+        if self.return_meshes or preview_mode == "rgb":
             intrinsics = GuidedStableDiffuser.get_depth_intrinsics(device=depth.device)
 
             bg_depth_mesh = depth_to_mesh(depth=bg_depth_harmonized, intrinsics=intrinsics)
             fg_depth_mesh = depth_to_mesh(depth=depth, intrinsics=intrinsics, mask=fg_mask[0, 0]>0.5)
 
+        if self.return_meshes:
             with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
                 f.close()
                 bg_depth_mesh_path = f.name
@@ -456,7 +461,67 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         if orig_bg_img is not None:
             bg_img = orig_bg_img
 
-        outputs = (edited_disparity, bg_img, depth, bg_depth_harmonized)
+        if preview_mode == "depth":
+            outputs = (edited_disparity, bg_img, depth, bg_depth_harmonized)
+
+        elif preview_mode == "rgb":
+
+            with torch.no_grad():
+                camera = Camera(intrinsics=intrinsics)
+
+                renderer = PyTorch3DRenderer(
+                    output_names=['flat_vertex_color'],
+                    args=PyTorch3DRendererArgs(
+                        device=self.device,
+                        output_res=(depth.shape[-2], depth.shape[-1]),
+                        cull_backfaces=True,
+                        blur_radius=0.00001) # need a small blur radius otherwise the renderer may have artifacts if triangle edges align with pixel centers
+                )
+                
+                fg_depth_mesh.verts.copy_(transform_points(
+                    points=fg_depth_mesh.verts,
+                    rot_angle=torch.tensor(rot_angle, dtype=torch.float32, device=self.device),
+                    rot_axis=rot_axis, translation=translation))
+
+                # TEMP: get mask of disoccluded pixels
+                renderer.update_scene(scene_elements={
+                    'meshes': [fg_depth_mesh],
+                    'cameras': [camera]})
+                rendered_outputs = renderer.render()
+                edited_fg_mask = rendered_outputs['flat_vertex_color'][..., 2] > 0.5
+                disoccluded_mask = (fg_mask > 0.5) & ~edited_fg_mask[:, None]
+
+                # get vertex colors for foreground and background meshes
+                # by sampling the foreground and background images at the mesh vertices
+                im = torch.from_numpy(img).to(dtype=torch.float32, device=self.device).permute(2, 0, 1)[None, ...] / 255.0
+                im = crop_and_resize(img=im, size=self.img_res)
+                bg_im = torch.from_numpy(bg_img).to(dtype=torch.float32, device=self.device).permute(2, 0, 1)[None, ...] / 255.0
+                bg_im = crop_and_resize(img=bg_im, size=self.img_res)
+                for mesh, src_img in zip([bg_depth_mesh, fg_depth_mesh], [bg_im, im]):
+                    img_coords = mesh.vert_attributes['color'].values[..., :2]
+                    vert_colors = torch.nn.functional.grid_sample(
+                        input=src_img,
+                        grid=img_coords[None, None, ...]*2-1,
+                        align_corners=True
+                        )[0, :, 0, :].permute(1, 0)
+                    mesh.vert_attributes['color'].values.copy_(vert_colors)
+
+                renderer.update_scene(scene_elements={
+                    'meshes': [bg_depth_mesh, fg_depth_mesh],
+                    'cameras': [camera]})
+                rendered_outputs = renderer.render()
+
+                edited_image = rendered_outputs['flat_vertex_color'].permute(0, 3, 1, 2)
+                
+                # TEMP: use mask of disoccluded pixels as alpha channel
+                edited_image[:, [3]] = (~disoccluded_mask).to(dtype=edited_image.dtype)
+
+                edited_image = (edited_image[0].permute(1, 2, 0).detach().cpu().numpy()*255).round().astype("uint8")
+
+            outputs = (edited_image, bg_img, depth, bg_depth_harmonized)
+
+        else:
+            raise ValueError(f'Invalid preview_mode: {preview_mode}.')
 
         if self.return_meshes:
             outputs = outputs + (bg_depth_mesh_path, fg_depth_mesh_path)
@@ -734,7 +799,7 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
 
                 # Step 3: Edit Object
                 with gr.Column():
-                    gr_edited_image = gr.Image(label="Edited Image")
+                    gr_edited_image = gr.Image(label="Edited Image", format='png')
                     if self.debug_images:
                         gr_debug_images = gr.Image(label="Debug Images")
                     gr.HTML(value="""
@@ -766,6 +831,8 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                     gr_fg_weight = gr.Number(label="Foreground Preservation", value=default_inputs['fg_preservation'], minimum=0.0, maximum=100.0)
                     gr_bg_weight = gr.Number(label="Background Preservation", value=default_inputs['bg_preservation'], minimum=0.0, maximum=100.0)
                     # gr_fg_mask_dilation = gr.Number(label="Forground Mask Dilation", precision=0, value=3, minimum=0, maximum=100)
+                    
+                    gr_preview_mode = gr.Dropdown(label="Preview Mode", choices=["depth", "rgb"], value="depth")
                    
             gr_step1_show_intermediate.change(
                 self.toggle_visibility,
@@ -859,7 +926,8 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
                 self.preview_edit,
                 inputs=[
                     gr_input_image, gr_fg_mask, gr_fg_mask_dilation, gr_bg_img, gr_depth, gr_bg_depth_harmonized,
-                    gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z],
+                    gr_rot_angle, gr_rot_axis_x, gr_rot_axis_y, gr_rot_axis_z, gr_trans_x, gr_trans_y, gr_trans_z,
+                    gr_preview_mode],
                 outputs=preview_edit_button_outputs
             )
 
