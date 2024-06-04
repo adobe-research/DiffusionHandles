@@ -22,10 +22,13 @@ published at [CVPR 2024](https://cvpr.thecvf.com/).
 ![Pipeline Overview](media/overview.png)
 ![Edit](media/edit.png)
 
-* The input image is first reconstructed with a depth-to-image diffusion model. Intermediate activations are recorded.
-* Depth is estimated using a monocular depth estimator and the intermediate activations from the last step are lifted to the 3D depth surface.
-* A user-supplied 3D transform is applied to the depth surface and the lifted activations.
-* The 3D-transformed depth and activations are used to guide the diffusion model to generate an edited image.
+1. The input image is first reconstructed with a depth-to-image diffusion model. Intermediate activations are recorded.
+
+2. Depth is estimated using a monocular depth estimator and the intermediate activations from the last step are lifted to the 3D depth surface.
+
+3. A user-supplied 3D transform is applied to the depth surface and the lifted activations.
+
+4. The 3D-transformed depth and activations are used to guide the diffusion model to generate an edited image.
 
 ## Installation
 
