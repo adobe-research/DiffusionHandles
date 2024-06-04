@@ -4,14 +4,14 @@
 
 - [Conda](https://docs.conda.io/en/latest/miniconda.html)
 
-## Install as Package (Experimental)
+<!-- ## Install as Package (Experimental)
 
 Install Diffusion Handles as pip package.
 
 ```bash
-pip install git+https://github.com/karranpandey/diffusionhandles.git
+pip install git+https://github.com/Research-Adobe/DiffusionHandles.git
 ```
-TODO: make sure no dependencies are missing
+TODO: make sure no dependencies are missing -->
 
 ## Install for Development
 
@@ -22,10 +22,9 @@ Create a conda environment:
 conda create -n diffusionhandles python=3.9
 conda activate diffusionhandles
 ```
-
-> **Optional Explicit CUDA & PyTorch Installation**
+> **CUDA & PyTorch Installation**
 >
-> If a CUDA version compatible with PyTorch is not installed on your system, install PyTorch with conda to make sure you have a CUDA version that works with PyTorch:
+> If PyTorch and a compatible CUDA runtime are not installed on your system, install PyTorch with conda to make sure you have a CUDA version that works with PyTorch:
 > ```bash
 > conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
 > ```
@@ -37,7 +36,7 @@ conda activate diffusionhandles
 
 Clone the Diffusion Handles repository:
 ```bash
-git clone https://github.com/karranpandey/diffusionhandles.git
+git clone https://https://github.com/Research-Adobe/DiffusionHandles.git
 ```
 
 Install as editable package with development dependencies:
@@ -46,7 +45,7 @@ cd diffusionhandles
 pip install -e .[dev]
 ```
 
-## Install as Web App (Experimental)
+## Install as Web App
 
 Follow the steps to install for development, replacing the following step to use the `webapp` extras instead of `dev` extras:
 ```bash
