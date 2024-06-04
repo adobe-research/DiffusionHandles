@@ -45,5 +45,5 @@ uvicorn = { version = "*", extras = ["standard"], optional = true } # for the we
 gradio_hdrimage = { version = "*", optional = true } # for the web app
 
 [tool.poetry.extras]
-dev = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib", "imageio"]
+test = ["zoedepth", "saicinpainting", "lang-sam", "Jinja2", "matplotlib", "imageio"]
 webapp = ["zoedepth", "saicinpainting", "lang-sam", "gradio", "fastapi", "uvicorn", "gradio_hdrimage"]

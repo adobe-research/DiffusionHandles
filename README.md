@@ -1,8 +1,33 @@
 # DiffusionHandles
+[[Project Page](https://diffusionhandles.github.io/)][[ArXiv](https://arxiv.org/pdf/2312.02190)]
 
-## Requirements
+Diffusion Handles is a **training-free** method that enables **3D-aware image edits** using a **pre-trained Diffusion Model**.
 
-- [Conda](https://docs.conda.io/en/latest/miniconda.html)
+![Teaser](media/teaser.png)
+
+This is the official implementation of the paper\
+[**Diffusion Handles: Enabling 3D Edits for Diffusion Models by Lifting Activations to 3D**](https://diffusionhandles.github.io/)\
+by [Karran Pandey](https://karranpandey.github.io/), [Paul Guerrero](https://paulguerrero.net/), [Metheus Gadelha](http://mgadelha.me/), [Yannick Hold-Geoffroy](https://yannickhold.com/), [Karan Singh](https://www.dgp.toronto.edu/~karan/), [Niloy J. Mitra](http://www0.cs.ucl.ac.uk/staff/n.mitra/)\
+published at [CVPR 2024](https://cvpr.thecvf.com/).
+
+## Examples
+![Example 1](media/toaster_screen.png)
+![Example 2](media/wine_screen.png)
+![Example 3](media/shoe.png)
+![Example 4](media/real_car.png)
+
+## Approach
+
+![Example](media/example.png)
+![Pipeline Overview](media/overview.png)
+![Edit](media/edit.png)
+
+* The input image is first reconstructed with a depth-to-image diffusion model. Intermediate activations are recorded.
+* Depth is estimated using a monocular depth estimator and the intermediate activations from the last step are lifted to the 3D depth surface.
+* A user-supplied 3D transform is applied to the depth surface and the lifted activations.
+* The 3D-transformed depth and activations are used to guide the diffusion model to generate an edited image.
+
+## Installation
 
 <!-- ## Install as Package (Experimental)
 
@@ -13,16 +38,12 @@ pip install git+https://github.com/Research-Adobe/DiffusionHandles.git
 ```
 TODO: make sure no dependencies are missing -->
 
-## Install for Development
-
-Also installs dependencies required to run test scripts and notebooks in the `test` folder. This should allow running all scripts and notebooks in the test folder.
-
-Create a conda environment:
+Create a [Conda](https://docs.conda.io/en/latest/miniconda.html) environment:
 ```bash
 conda create -n diffusionhandles python=3.9
 conda activate diffusionhandles
 ```
-> **CUDA & PyTorch Installation**
+> ### CUDA & PyTorch Installation
 >
 > If PyTorch and a compatible CUDA runtime are not installed on your system, install PyTorch with conda to make sure you have a CUDA version that works with PyTorch:
 > ```bash
@@ -37,23 +58,27 @@ conda activate diffusionhandles
 Clone the Diffusion Handles repository:
 ```bash
 git clone https://https://github.com/Research-Adobe/DiffusionHandles.git
+cd DiffusionHandles
 ```
 
-Install as editable package with development dependencies:
+Next, install Diffusion Handles as editable package. Different sets of package dependencies are provided, depending on what you need:
 ```bash
-cd diffusionhandles
-pip install -e .[dev]
+pip install -e . # Only basic packages required for the 'diffhandles' directory.
+pip install -e .[test] # Basic + packages required for the 'test' directory.
+pip install -e .[webapp] # Basic + packages required for the 'webapp' directory.
 ```
 
-## Install as Web App
+## Run Test Scripts
 
-Follow the steps to install for development, replacing the following step to use the `webapp` extras instead of `dev` extras:
+The following will run through the test set and put results in the `results` subdirectory:
 ```bash
-cd diffusionhandles
-pip install -e .[webapp]
+cd test
+python test_diffusion_handles.py
 ```
 
-Start the full Diffusion Handles Pipeline WebApp in [tmux](https://github.com/tmux/tmux/wiki), where `netpath` is the base network path from the root of the server (for example `/demo` for a server at `https://my_server.com/demo`):
+## Run Web App
+
+Start the full Diffusion Handles Pipeline Web App in [tmux](https://github.com/tmux/tmux/wiki), where `netpath` is the base network path from the root of the server (for example `/demo` for a server at `https://my_server.com/demo`):
 ```bash
 sudo apt install tmux
 tmux
@@ -61,3 +86,13 @@ cd webapp
 source start_webapps_in_tmux.sh <netpath>
 ```
 Check `start_webapps_in_tmux.sh` to adjust configuration details like the distribution of ports and GPUs among services.
+
+## Citation
+```bibtex
+@article{pandey2024diffusionhandles,
+  title={Diffusion Handles: Enabling 3D Edits for Diffusion Models by Lifting Activations to 3D},
+  author={Pandey, Karran and Guerrero, Paul and Gadelha, Metheus and Hold-Geoffroy, Yannick and Singh, Karan and Mitra, Niloy J.},
+  journal={CVPR},
+  year={2024}
+}
+```
