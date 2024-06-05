@@ -165,6 +165,7 @@ def save_mesh_with_trimesh(
     tmesh = trimesh.Trimesh(
         vertices=mesh.verts.detach().cpu().numpy(),
         faces=mesh.faces.detach().cpu().numpy(),
+        process=False, validate=False # to ensure trimesh does not alter the mesh in any way
     )
 
     # save vertex colors

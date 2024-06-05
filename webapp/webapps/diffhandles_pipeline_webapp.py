@@ -437,13 +437,13 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
             fg_depth_mesh = depth_to_mesh(depth=depth, intrinsics=intrinsics, mask=fg_mask[0, 0]>0.5)
 
         if self.return_meshes:
-            with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
                 f.close()
                 bg_depth_mesh_path = f.name
                 self.temp_file_paths.append(bg_depth_mesh_path)
             save_mesh(bg_depth_mesh, bg_depth_mesh_path)
 
-            with tempfile.NamedTemporaryFile(suffix=".ply", delete=False) as f:
+            with tempfile.NamedTemporaryFile(suffix=".glb", delete=False) as f:
                 f.close()
                 fg_depth_mesh_path = f.name
                 self.temp_file_paths.append(fg_depth_mesh_path)
