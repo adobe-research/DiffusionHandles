@@ -88,6 +88,10 @@ tmux
 cd webapp
 source start_webapps_in_tmux.sh <netpath>
 ```
+The main web app should then be reachable at `https://my_server.com/demo/dh`.
+
+The demo consists of multiple services, all of which are started by this script in separate tmux tabs. The main service is in the `diffhandles_pipeline` tab and requires the other services to be running, so the script above starts the main service a few seconds after the others. This is sometimes too short for the other servivces to have finished starting, in that case the main service will fail. You can check by going to the `diffhandles_pipeline` tab in tmux and check if the service is running there. If not, just repeat the last command that was run in that tab after making sure the services in all other tabs are running.
+
 Check `start_webapps_in_tmux.sh` to adjust configuration details like the distribution of ports and GPUs among services.
 
 ## Citation
