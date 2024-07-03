@@ -41,11 +41,11 @@ class DiffhandlesPipelineWebapp(GradioWebapp):
         if default_edit_path is None:
             default_edit_path = 'data/toy_cubes/edit_001'
 
-        self.text2img_client = gradio_client.Client(text2img_url, upload_files=True, download_files=True)
-        self.foreground_selector_client = gradio_client.Client(foreground_selector_url, upload_files=True, download_files=True)
-        self.foreground_remover_client = gradio_client.Client(foreground_remover_url, upload_files=True, download_files=True)
-        self.depth_estimator_client = gradio_client.Client(depth_estimator_url, upload_files=True, download_files=True)
-        self.diffhandles_client = gradio_client.Client(diffhandles_url, upload_files=True, download_files=True)
+        self.text2img_client = gradio_client.Client(text2img_url, download_files=True)
+        self.foreground_selector_client = gradio_client.Client(foreground_selector_url, download_files=True)
+        self.foreground_remover_client = gradio_client.Client(foreground_remover_url, download_files=True)
+        self.depth_estimator_client = gradio_client.Client(depth_estimator_url, download_files=True)
+        self.diffhandles_client = gradio_client.Client(diffhandles_url, download_files=True)
         self.default_edit_path = default_edit_path
         self.timeout_seconds = timeout_seconds
         self.debug_images = debug_images

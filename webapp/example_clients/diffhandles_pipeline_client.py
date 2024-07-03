@@ -6,7 +6,7 @@ import gradio_client
 class DiffhandlesPipelineClient():
     def __init__(self, url: str, timeout_seconds: float = None):
         self.url = url
-        self.client = gradio_client.Client(url, upload_files=True, download_files=True)
+        self.client = gradio_client.Client(url, download_files=True)
         self.timeout_seconds = timeout_seconds
 
     def edit_image(
