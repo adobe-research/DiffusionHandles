@@ -20,12 +20,13 @@ authors = [
 [tool.poetry.dependencies]
 pip = "*"
 python = ">=3.9, <3.11"
-torch = ">=2.0"
+torch = ">=2.0, <2.6" # version 2.6 can no longer be installed with conda
 torchvision = "*"
 trimesh = "*"
-numpy = ">=1.24.1"
+numpy = ">=1.24.1, < 2.0" # version 2.0 introduces some breaking changes that are incompatible with albumentations, which is installed by saicinpainting
 scipy = "*"
 timm = "0.6.12" # required by ZoeDepth (the pretrained weights are for this version and do not work with some later versions)
+huggingface-hub = "0.25.2" # diffusers will otherwise install a newer version that is not longer compatible with diffusers
 diffusers = "0.23.*" # since we use a custom denoising UNet that we obtain by patching the model in the diffusers library, we need the exact version
 opencv-python = "*"
 transformers = ">=4.33"

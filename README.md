@@ -43,14 +43,14 @@ TODO: make sure no dependencies are missing -->
 
 Create a [Conda](https://docs.conda.io/en/latest/miniconda.html) environment:
 ```bash
-conda create -n diffusionhandles python=3.9
+conda create -n diffusionhandles python=3.9 -y
 conda activate diffusionhandles
 ```
 > ### CUDA & PyTorch Installation
 >
 > If PyTorch and a compatible CUDA runtime are not installed on your system, install PyTorch with conda to make sure you have a CUDA version that works with PyTorch:
 > ```bash
-> conda install pytorch torchvision torchaudio pytorch-cuda=12.1 -c pytorch -c nvidia
+> conda install pytorch==2.4.1 torchvision==0.19.1 torchaudio==2.4.1 pytorch-cuda=12.1 -c pytorch -c nvidia
 > ```
 >
 > If a suitable CUDA dev environment including nvcc is not installed on your system, install CUDA dev environment matching the CUDA runtime version:
@@ -67,7 +67,11 @@ cd DiffusionHandles
 Next, install Diffusion Handles as editable package. Different sets of package dependencies are provided, depending on what you need:
 ```bash
 pip install -e . # Only basic packages required for the 'diffhandles' directory.
+```
+```bash
 pip install -e .[test] # Basic + packages required for the 'test' directory.
+```
+```bash
 pip install -e .[webapp] # Basic + packages required for the 'webapp' directory.
 ```
 
